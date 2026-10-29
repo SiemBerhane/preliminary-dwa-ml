@@ -13,12 +13,9 @@ def get_tension_data(processed_data_path, layers):
         list: A list of dictionaries containing tension data for each wire in the specified layers. 
         Each element contains the following keys:
   
-            - Stage: The stage of the process (e.g., "Winding").
-            - Layer: The layer name (e.g., "U" or "X").
-            - Side: The side of the layer (e.g., "A" or "B").
-            - Wire_ID: The unique identifier for the wire.
-            - Name: The name associated with the tension data.
-            - Tension: The tension value extracted from the processed data.
+            - stage: The stage of the process (e.g., "Winding").
+            - uid: A unique identifier for the wire segment, layer + side + segment number.
+            - tension: The tension value extracted from the processed data.
     """
     
     full_data = json.load(open(processed_data_path))
@@ -43,10 +40,6 @@ def get_tension_data(processed_data_path, layers):
                     flat_records.append({
                                     "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
                                     "stage": "Winding",
-                                    # "layer": layer, # can loop through layer and side in final version to make it ful automatic
-                                    # "side": side,
-                                    # "segment_id": int(segment_id),
-                                    # "parent_folder": parent_folder,
                                     "tension": tension 
                                     # "Frequency": freq - create function to do so
                                 })
@@ -103,12 +96,9 @@ def map_wire_segments_to_channels(scan, folder_path):
 
     for segment in wire_segments:
         tar_digits = segment % 100
-        # print(f"Wire: {wire}, Target Digits: {tar_digits}, Channel: {channel_map[tar_digits]}")
         if tar_digits in channel_map:
             channel_idx = channel_map[tar_digits]
             channel_data = scan.get(str(channel_idx), {})
-
-            
             
             # Only append if there is actual frequency data in that channel
             if channel_data.get("freq") and channel_data.get("ampl"):
