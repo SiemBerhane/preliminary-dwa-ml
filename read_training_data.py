@@ -128,10 +128,10 @@ def get_lengths(lengths_path, layer):
         
     Returns:
         pd.DataFrame: A DataFrame containing the segment lengths for the specified layer."""
-
+    sheet_name = layer + "-layer"
     if layer == "U" or layer == "V":
-        side_a = pd.read_excel(lengths_path, sheet_name=layer, header=11, usecols="A, V")
-        side_b = pd.read_excel(lengths_path, sheet_name=layer, header=11, usecols="AJ")
+        side_a = pd.read_excel(lengths_path, sheet_name=sheet_name, header=11, usecols="A, V")
+        side_b = pd.read_excel(lengths_path, sheet_name=sheet_name, header=11, usecols="AJ")
 
         seg_index_label_a = side_a.columns[0]
         measurement_label = side_a.columns[1]
