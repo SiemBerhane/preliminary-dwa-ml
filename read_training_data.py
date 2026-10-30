@@ -1,5 +1,6 @@
 import json
 import os
+import pandas as pd
 
 def get_tension_data(processed_data_path, layers):
     """
@@ -115,3 +116,42 @@ def map_wire_segments_to_channels(scan, folder_path):
                 })
 
     return extracted_scans
+
+def get_lengths(lengths_path, layer):
+    """
+    Reads the lengths data of specific layer from the specified Excel file and 
+    returns a DataFrame with the relevant columns.
+    
+    Args:
+        lengths_path (str): Path to the Excel file containing lengths data. 
+        layer (str): The layer for which to extract lengths data. Should be either "U", "V", "X", or "G".
+        
+    Returns:
+        pd.DataFrame: A DataFrame containing the segment lengths for the specified layer."""
+
+    if layer == "U" or layer == "V":
+        side_a = pd.read_excel(lengths_path, sheet_name=layer, header=11, usecols="A, V")
+        side_b = pd.read_excel(lengths_path, sheet_name=layer, header=11, usecols="AJ")
+
+        seg_index_label_a = side_a.columns[0]
+        measurement_label = side_a.columns[1]
+        seg_index_label_b = side_b.columns[0]
+
+        # rows with no measurement label are classed as too short
+        side_a = side_a.dropna(subset=[measurement_label]) 
+        side_a[seg_index_label_a] = side_a[seg_index_label_a].astype(int)
+
+        # side b segments have the same length as side a so just copy across
+        side_b[measurement_label] = side_a[measurement_label]
+        side_b = side_b.dropna(subset=[measurement_label])
+        side_b[seg_index_label_b] = side_b[seg_index_label_b].astype(int)
+
+        # create uid = layer + side + segment_index
+        side_a["uid"] = layer + "A" + side_a[seg_index_label_a].astype(str)
+        side_b["uid"] = layer + "B" + side_b[seg_index_label_b].astype(str)
+
+        # dropping seg index columns so they don't clutter final dataframe
+        side_a = side_a.drop(columns=[seg_index_label_a])
+        side_b = side_b.drop(columns=[seg_index_label_b])
+
+        return pd.concat([side_a, side_b])
