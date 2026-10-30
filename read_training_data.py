@@ -42,7 +42,6 @@ def get_tension_data(processed_data_path, layers):
                                     "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
                                     "stage": "Winding",
                                     "tension": tension 
-                                    # "Frequency": freq - create function to do so
                                 })
                 except IndexError as e:
                     print(f"IndexError: No tension data found for Segment_ID {segment_id} in Layer {layer}, Side {side}.")
@@ -154,4 +153,19 @@ def get_lengths(lengths_path, layer):
         side_a = side_a.drop(columns=[seg_index_label_a])
         side_b = side_b.drop(columns=[seg_index_label_b])
 
-        return pd.concat([side_a, side_b])
+        lengths = pd.concat([side_a, side_b])
+        return lengths.rename(columns={measurement_label: "length"})
+
+
+def calculate_res_freq(extracted_scans):
+    """ 
+    Calcualtes the resonant frequency based on fundamental frequency formula
+
+    Args:
+        extracted_scans (pd.DataFrame): A dataframe containing the wire ID, channel index, frequency and amplitude data  
+
+    Returns:
+        pd.DataFrame: A dataframe containing the wire ID, channel index, frequency, amplitude and resonant frequency data  
+    """
+
+    tension = extracted_scans['tension'].values
