@@ -1,6 +1,7 @@
 import json
 import os
 import pandas as pd
+import numpy as np
 
 def get_tension_data(processed_data_path, layers):
     """
@@ -126,9 +127,17 @@ def get_lengths(lengths_path, layer):
         layer (str): The layer for which to extract lengths data. Should be either "U", "V", "X", or "G".
         
     Returns:
-        pd.DataFrame: A DataFrame containing the segment lengths for the specified layer."""
+        pd.DataFrame: A DataFrame containing the segment lengths for the specified layer for "U" and "V" layers, or a constant length for "X" and "G" layers.
+    """
     sheet_name = layer + "-layer"
-    if layer == "U" or layer == "V":
+
+    if layer == "X": # wire lengths are constant for X and G layers
+        lengths = 1.273 * 1000  # convert to mm
+
+    elif layer == "G":
+        lengths = 1.282 * 1000  # convert to mm
+
+    elif layer == "U" or layer == "V":
         side_a = pd.read_excel(lengths_path, sheet_name=sheet_name, header=11, usecols="A, V")
         side_b = pd.read_excel(lengths_path, sheet_name=sheet_name, header=11, usecols="AJ")
 
@@ -154,18 +163,25 @@ def get_lengths(lengths_path, layer):
         side_b = side_b.drop(columns=[seg_index_label_b])
 
         lengths = pd.concat([side_a, side_b])
-        return lengths.rename(columns={measurement_label: "length"})
+        lengths = lengths.rename(columns={measurement_label: "length"})
+
+    else:
+        raise ValueError("Invalid layer specified. Must be 'U', 'V', 'X', or 'G'.")
+
+    return lengths
 
 
-def calculate_res_freq(extracted_scans):
+def calculate_res_freq(tensions, lengths, rho):
     """ 
     Calcualtes the resonant frequency based on fundamental frequency formula
 
     Args:
-        extracted_scans (pd.DataFrame): A dataframe containing the wire ID, channel index, frequency and amplitude data  
+        tensions (pd.Series): A series containing the tension data.
+        lengths (pd.Series): A series containing the length data.
+        rho (float): The linear density of the wire.
 
     Returns:
-        pd.DataFrame: A dataframe containing the wire ID, channel index, frequency, amplitude and resonant frequency data  
+        pd.Series: A series containing the resonant frequency data.
     """
 
-    tension = extracted_scans['tension'].values
+    return np.sqrt(tensions / rho) * (1 / (2*lengths))
