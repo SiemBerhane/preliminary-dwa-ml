@@ -3,13 +3,14 @@ import os
 import pandas as pd
 import numpy as np
 
-def get_tension_data(processed_data_path, layers):
+def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
     """
     Extract tension data from the processed JSON file for specified layers and store it in a flat list of records.
 
     Args:
         processed_data_path (str): Path to the processed JSON file.
-        layers (list): List of layer names to extract tension data from.
+        stage (str): Stage the data corresponds to (e.g., "Winding", "DWA Development" etc.).
+        layers (list): List of layer names to extract tension data from. If left empty, assumes data contains all layers.
     
     Returns:
         list: A list of dictionaries containing tension data for each wire in the specified layers. 
@@ -21,11 +22,11 @@ def get_tension_data(processed_data_path, layers):
     """
     
     full_data = json.load(open(processed_data_path))
-    winding_data = full_data["Winding"]
+    stage_data = full_data[stage]
     flat_records = []
     
     for layer in layers:
-        layer_data = winding_data[layer]
+        layer_data = stage_data[layer]
 
         for side, side_data in layer_data.items():  
             for segment_id, wire_data in side_data.items(): # gets first two indices of dict
@@ -34,18 +35,23 @@ def get_tension_data(processed_data_path, layers):
 
                 try:
                     parent_folder = list(side_data[segment_id]['tension'].keys())[0] # long string: e.g 20230208T185357_U_A_<segment>
-                    tension = side_data[segment_id]['tension'][parent_folder]['Auto']['tension'] 
-
-                    if layer == "U" and side == "B" and int(segment_id) == 18:
-                        print(f"Debug Info - Layer: {layer}, Side: {side}, Segment_ID: {segment_id}, parent_folder: {parent_folder}, Tension: {tension}")
                     
+                    if len(side_data[segment_id]['tension'][parent_folder]) == 2: # manually corrected tensions also include auto calculations
+                        tension = side_data[segment_id]['tension'][parent_folder]["Manual"]["tension"]
+                    elif len(side_data[segment_id]['tension'][parent_folder]) == 1:
+                        tension = side_data[segment_id]['tension'][parent_folder]["Auto"]["tension"]
+
+                    if type(tension) is str:
+                        continue # skip if tension is a string (e.g. "No tension data found")
+                    elif tension == 0:
+                        continue
+
                     flat_records.append({
                                     "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
-                                    "stage": "Winding",
                                     "tension": tension 
                                 })
                 except IndexError as e:
-                    print(f"IndexError: No tension data found for Segment_ID {segment_id} in Layer {layer}, Side {side}.")
+                    print(f"IndexError: No tension data found for Segment_ID {segment_id} in Layer {layer}, Side {side}, Stage {stage}.")
 
     return flat_records
 
@@ -89,9 +95,21 @@ def map_wire_segments_to_channels(scan, folder_path):
     apa_channels = scan['apaChannels']
     wire_segments = scan['wireSegments']
 
-    channel_map = { # creates map of channels corresponding to freq/ampl indexing e.g. 0 -> channel 0
-        (val%100): idx for idx, val in enumerate(apa_channels) if val is not None
-    }
+    # Create a map of channels corresponding to frequency/amplitude indexing,
+    # e.g. 0 -> channel 0.
+    channel_map = {}
+    
+    for idx, val in enumerate(apa_channels):
+        if val is not None:
+
+            try:
+                channel_map[int(val) % 100] = int(idx) # sometimes values are stored as strings instead of ints
+
+            except TypeError:
+                print(f"TypeError: Invalid value in apa_channels with value ({val}), with index ({idx})")
+            except ValueError: # val = "None" should be ignored, but if it's anything else, raise an error
+                if val != "None":
+                    print(f"ValueError: Invalid value in apa_channels with value ({val}), with index ({idx})")
 
     extracted_scans = []
 
@@ -110,6 +128,7 @@ def map_wire_segments_to_channels(scan, folder_path):
                     "freq": channel_data["freq"],
                     "ampl": channel_data["ampl"],
                     "layer": scan["layer"],
+                    "stage": scan["stage"],
                     "headboardNumber": scan["headboardNum"],
                     "side": scan["side"],
                     "parent_folder": folder_path
