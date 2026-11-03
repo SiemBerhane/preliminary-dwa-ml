@@ -15,8 +15,6 @@ def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
     Returns:
         list: A list of dictionaries containing tension data for each wire in the specified layers. 
         Each element contains the following keys:
-  
-            - stage: The stage of the process (e.g., "Winding").
             - uid: A unique identifier for the wire segment, layer + side + segment number.
             - tension: The tension value extracted from the processed data.
     """
@@ -30,30 +28,69 @@ def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
 
         for side, side_data in layer_data.items():  
             for segment_id, wire_data in side_data.items(): # gets first two indices of dict
+                    
                 if len(wire_data['tension']) == 0:
                     continue
 
-                try:
-                    parent_folder = list(side_data[segment_id]['tension'].keys())[0] # long string: e.g 20230208T185357_U_A_<segment>
-                    
-                    if len(side_data[segment_id]['tension'][parent_folder]) == 2: # manually corrected tensions also include auto calculations
-                        tension = side_data[segment_id]['tension'][parent_folder]["Manual"]["tension"]
-                    elif len(side_data[segment_id]['tension'][parent_folder]) == 1:
-                        tension = side_data[segment_id]['tension'][parent_folder]["Auto"]["tension"]
+                elif len(wire_data['tension']) == 1:
+                        parent_folder = list(wire_data['tension'].keys())[0] # long string: e.g 20230208T185357_U_A_<segment>
+                        
+                        tension = extract_tension_from_reading(wire_data["tension"][parent_folder])
+                        if tension is not None:
+                            flat_records.append({
+                                            "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
+                                            "parent_folder": parent_folder,
+                                            "tension": tension 
+                                        })
+                            
+                    # except IndexError as e:
+                    #     print(f"IndexError: No tension data found for Segment_ID {segment_id} in Layer {layer}, Side {side}, Stage {stage}.")
 
-                    if type(tension) is str:
-                        continue # skip if tension is a string (e.g. "No tension data found")
-                    elif tension == 0:
-                        continue
+                else:
+                    tensions = []
+                    for reading in wire_data['tension'].keys():  
+                        tension = extract_tension_from_reading(wire_data["tension"][reading])
 
-                    flat_records.append({
-                                    "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
-                                    "tension": tension 
-                                })
-                except IndexError as e:
-                    print(f"IndexError: No tension data found for Segment_ID {segment_id} in Layer {layer}, Side {side}, Stage {stage}.")
+                        if tension is not None:
+                            tensions.append(tension) # only append tension if > 0
+ 
+                    if layer == "G" and side == "B" and segment_id == "00439":
+                        print(f"Debug: Found segment GB00439 in layer {layer}, side {side}.")
+                    if len(tensions) > 0:
+                        flat_records.append({
+                                        "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
+                                        "parent_folder": reading,
+                                        "tension": min(tensions) 
+                                    })
 
     return flat_records
+
+def extract_tension_from_reading(reading):
+    """
+    Extracts the tension value from a reading dictionary, prioritizing manual readings over auto readings.
+
+    Args:
+        reading (dict): A dictionary containing all tension readings for a given segment, which may include both manual and auto readings.
+        should = side_data[segment_id]['tension'].keys()[0] # long string: e.g 20230208T185357_U_A_<segment>
+    
+    Returns:
+        float or None: The extracted tension value, or None if no valid tension is found.
+    """
+
+    try:                            
+        if len(reading) == 2: # manually corrected tensions also include auto calculations
+            tension = reading["Manual"]["tension"]
+        elif len(reading) == 1:
+            tension = reading["Auto"]["tension"]
+
+        if type(tension) is str or tension <= 0:
+            tension = None
+
+    except IndexError as e:
+        return e
+
+    return tension
+    
 
 def get_raw_data(path, keys_to_remove):
     """
@@ -73,9 +110,11 @@ def get_raw_data(path, keys_to_remove):
     list_of_scans = []
     for dir in list_of_dir:
         if "amplitudeData.json" in os.listdir(dir):
+            # relative_path = os.path.relpath(dir, path)
+            rel_path = dir.removeprefix(list_of_dir[0]) # remove the root path from the current path to get relative path
             scan = json.load(open(dir + "/amplitudeData.json"))
             clean_scan = {k: v for k, v in scan.items() if k not in keys_to_remove}
-            final_scan = map_wire_segments_to_channels(clean_scan, dir)
+            final_scan = map_wire_segments_to_channels(clean_scan, rel_path)
             list_of_scans.extend(final_scan)
 
     return list_of_scans
