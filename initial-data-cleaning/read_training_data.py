@@ -2,6 +2,7 @@ import json
 import os
 import pandas as pd
 import numpy as np
+import warnings
 
 def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
     """
@@ -42,20 +43,15 @@ def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
                                             "parent_folder": parent_folder,
                                             "tension": tension 
                                         })
-                            
-                    # except IndexError as e:
-                    #     print(f"IndexError: No tension data found for Segment_ID {segment_id} in Layer {layer}, Side {side}, Stage {stage}.")
 
-                else:
+                else: # extract all the tension readings and select min value that is > 0
                     tensions = []
                     for reading in wire_data['tension'].keys():  
                         tension = extract_tension_from_reading(wire_data["tension"][reading])
 
                         if tension is not None:
-                            tensions.append(tension) # only append tension if > 0
- 
-                    if layer == "G" and side == "B" and segment_id == "00439":
-                        print(f"Debug: Found segment GB00439 in layer {layer}, side {side}.")
+                            tensions.append(tension)
+
                     if len(tensions) > 0:
                         flat_records.append({
                                         "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
@@ -70,8 +66,8 @@ def extract_tension_from_reading(reading):
     Extracts the tension value from a reading dictionary, prioritizing manual readings over auto readings.
 
     Args:
-        reading (dict): A dictionary containing all tension readings for a given segment, which may include both manual and auto readings.
-        should = side_data[segment_id]['tension'].keys()[0] # long string: e.g 20230208T185357_U_A_<segment>
+        reading (dict): A dictionary containing all tension readings for a given segment, which may include both manual and auto readings. 
+        Should equal side_data[segment_id]['tension'].keys()[0] e.g 20230208T185357_U_A_<segment>
     
     Returns:
         float or None: The extracted tension value, or None if no valid tension is found.
@@ -110,7 +106,6 @@ def get_raw_data(path, keys_to_remove):
     list_of_scans = []
     for dir in list_of_dir:
         if "amplitudeData.json" in os.listdir(dir):
-            # relative_path = os.path.relpath(dir, path)
             rel_path = dir.removeprefix(list_of_dir[0]) # remove the root path from the current path to get relative path
             scan = json.load(open(dir + "/amplitudeData.json"))
             clean_scan = {k: v for k, v in scan.items() if k not in keys_to_remove}
@@ -145,10 +140,10 @@ def map_wire_segments_to_channels(scan, folder_path):
                 channel_map[int(val) % 100] = int(idx) # sometimes values are stored as strings instead of ints
 
             except TypeError:
-                print(f"TypeError: Invalid value in apa_channels with value ({val}), with index ({idx})")
-            except ValueError: # val = "None" should be ignored, but if it's anything else, raise an error
+                warnings.warn(f"TypeError: Invalid value in apa_channels with value ({val}), with index ({idx})")
+            except ValueError: # val = "None" should be ignored, but if it's anything else, raise warning as to not interrupt code 
                 if val != "None":
-                    print(f"ValueError: Invalid value in apa_channels with value ({val}), with index ({idx})")
+                    warnings.warn(f"ValueError: Invalid value in apa_channels with value ({val}), with index ({idx})")
 
     extracted_scans = []
 
