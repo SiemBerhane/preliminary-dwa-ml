@@ -302,7 +302,6 @@ def baseline_subtracted(freq: np.ndarray, ampl: np.ndarray) -> np.ndarray:
     smooth_curve = savgol_filter(ampl, num_bins, 3)
     return ampl - smooth_curve
 
-
 def _get_num_savgol_bins(freq: np.ndarray) -> int:
     """
     Determines the appropriate number of bins to use for the savgol filter.
@@ -318,3 +317,29 @@ def _get_num_savgol_bins(freq: np.ndarray) -> int:
     if (num_bins % 2) == 0:
         num_bins += 1
     return num_bins
+
+def create_res_freq_map(freq, res_freq, step):
+    """
+    Creates a map of resonance frequencies for each frequency reading.
+    Sets value to 1 for frequencies within 2 steps of the resonance frequency on either side, 
+    and 0 otherwise.
+
+    Args:
+        freq (list): A list of frequency readings.
+        res_freq (list): A list of resonance frequencies corresponding to each frequency reading.
+        step (float): The step size between frequency readings.
+
+    Returns:
+        list: A binary list of arrays    
+    
+    """
+    res_freq_map = []
+
+    for i in range(len(freq)):
+        start_freq = freq[i][0]
+        curr_res_freq_map = np.zeros((len(freq[i]),), dtype=int)
+        index = int(round((res_freq[i] - start_freq) / step))
+        curr_res_freq_map.put([index - 2, index - 1, index, index + 1, index + 2], [1, 1, 1, 1, 1])
+        res_freq_map.append(curr_res_freq_map)
+
+    return res_freq_map
