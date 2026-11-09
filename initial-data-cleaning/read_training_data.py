@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import warnings
 import torch
+from scipy.signal import savgol_filter
 
 def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"], extract_all_tensions=True):
     """
@@ -285,3 +286,35 @@ def create_torch_datasets(df, sig2sig = False):
         y_tensor = torch.tensor(df["res_freq"].values, dtype=torch.float32).view(-1, 1)
 
     return (X_padded, y_tensor)
+
+def baseline_subtracted(freq: np.ndarray, ampl: np.ndarray) -> np.ndarray:
+    """
+    Subtracts the baseline from the data using a savgol filter.
+
+    Args:
+        freq (np.ndarray): An array of frequency values.
+        ampl (np.ndarray): An array of amplitude values.
+
+    Returns:
+        np.ndarray: An array of baseline-subtracted amplitude values.
+    """
+    num_bins = _get_num_savgol_bins(freq)
+    smooth_curve = savgol_filter(ampl, num_bins, 3)
+    return ampl - smooth_curve
+
+
+def _get_num_savgol_bins(freq: np.ndarray) -> int:
+    """
+    Determines the appropriate number of bins to use for the savgol filter.
+
+    Args:
+        freq (np.ndarray): An array of frequency values.
+
+    Returns:
+        int: The number of bins to use for the savgol filter.
+    """
+    step_size = freq[1] - freq[0]
+    num_bins = int(round(27 / (8 * step_size)))
+    if (num_bins % 2) == 0:
+        num_bins += 1
+    return num_bins
