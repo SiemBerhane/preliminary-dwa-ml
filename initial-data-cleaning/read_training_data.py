@@ -5,7 +5,7 @@ import numpy as np
 import warnings
 import torch
 
-def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
+def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"], extract_all_tensions=True):
     """
     Extract tension data from the processed JSON file for specified layers and store it in a flat list of records.
 
@@ -13,6 +13,8 @@ def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
         processed_data_path (str): Path to the processed JSON file.
         stage (str): Stage the data corresponds to (e.g., "Winding", "DWA Development" etc.).
         layers (list): List of layer names to extract tension data from. If left empty, assumes data contains all layers.
+        extract_all_tensions (bool): If True, extracts all tension readings for each wire segment. 
+                                      If False, only extracts the minimum non-zero tension reading for each wire segment.
     
     Returns:
         list: A list of dictionaries containing tension data for each wire in the specified layers. 
@@ -34,31 +36,31 @@ def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
                 if len(wire_data['tension']) == 0:
                     continue
 
-                elif len(wire_data['tension']) == 1:
-                        parent_folder = list(wire_data['tension'].keys())[0] # long string: e.g 20230208T185357_U_A_<segment>
-                        
+                if extract_all_tensions:
+                    for parent_folder in wire_data['tension'].keys():  
                         tension = extract_tension_from_reading(wire_data["tension"][parent_folder])
+
                         if tension is not None:
                             flat_records.append({
                                             "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
                                             "parent_folder": parent_folder,
-                                            "tension": tension 
+                                            "tension": tension
                                         })
-
-                else: # extract all the tension readings and select min value that is > 0
-                    tensions = []
-                    for reading in wire_data['tension'].keys():  
-                        tension = extract_tension_from_reading(wire_data["tension"][reading])
+                
+                else: # select min non zero tension from all readings
+                    for parent_folder in wire_data['tension'].keys():  
+                        tensions = []
+                        tension = extract_tension_from_reading(wire_data["tension"][parent_folder])
 
                         if tension is not None:
                             tensions.append(tension)
 
                     if len(tensions) > 0:
                         flat_records.append({
-                                        "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
-                                        "parent_folder": reading,
-                                        "tension": min(tensions) 
-                                    })
+                            "uid": str(layer)+str(side)+str(int(segment_id)), # int(segment_id) to remove leading zeros
+                            "parent_folder": parent_folder,
+                            "tension": min(tension)
+                        })
 
     return flat_records
 
@@ -240,12 +242,13 @@ def calculate_res_freq(tensions, lengths, rho):
 
     return np.sqrt(tensions / rho) * (1 / (2*lengths))
 
-def create_torch_datasets(df):
+def create_torch_datasets(df, sig2sig = False):
     """
     Creates PyTorch datasets for the input features and target variable from the given DataFrame.
     
     Args:
         df (pd.DataFrame): A DataFrame containing the input features and target variable.
+        sig2sig (bool): A flag indicating whether the target variable is a signal (True) or a scalar value (False). Default is False.
 
     Returns:
         tuple: A tuple containing the input features tensor (X_tensor) and target variable tensor (y_tensor).
@@ -259,13 +262,26 @@ def create_torch_datasets(df):
     padded_freq = torch.zeros((num_samples, target_len), dtype=torch.float32)
     padded_ampl = torch.zeros((num_samples, target_len), dtype=torch.float32)
 
+    if sig2sig:
+        padded_y = torch.zeros((num_samples, target_len), dtype=torch.float32) 
+
     # 3. Insert the actual data into the pre-allocated zero tensors
-    for i, (f_lst, a_lst) in enumerate(zip(df["freq"], df["ampl"])):
-        padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
-        padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
+    if sig2sig:
+        for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df["ampl"], df["res_freq_map"])):
+            padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
+            padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
+            padded_y[i, :len(y_lst)] = torch.tensor(y_lst, dtype=torch.float32)
+    else:
+        for i, (f_lst, a_lst) in enumerate(zip(df["freq"], df["ampl"])):
+            padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
+            padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
 
     # 4. Stack into the final 3D tensor (N, target_len, 2)
     X_padded = torch.stack((padded_freq, padded_ampl), dim=-1)
-    y_tensor = torch.tensor(df["res_freq"].values, dtype=torch.float32).view(-1, 1)
+
+    if sig2sig:
+        y_tensor = padded_y
+    else:
+        y_tensor = torch.tensor(df["res_freq"].values, dtype=torch.float32).view(-1, 1)
 
     return (X_padded, y_tensor)
