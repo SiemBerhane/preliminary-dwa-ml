@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import numpy as np
 import warnings
+import torch
 
 def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"]):
     """
@@ -238,3 +239,33 @@ def calculate_res_freq(tensions, lengths, rho):
     """
 
     return np.sqrt(tensions / rho) * (1 / (2*lengths))
+
+def create_torch_datasets(df):
+    """
+    Creates PyTorch datasets for the input features and target variable from the given DataFrame.
+    
+    Args:
+        df (pd.DataFrame): A DataFrame containing the input features and target variable.
+
+    Returns:
+        tuple: A tuple containing the input features tensor (X_tensor) and target variable tensor (y_tensor).
+    """
+
+    max_len = df["freq"].apply(len).max()
+    target_len = ((max_len + 63) // 64) * 64
+    num_samples = len(df)
+
+    # 2. Pre-allocate the final padded tensors with zeros
+    padded_freq = torch.zeros((num_samples, target_len), dtype=torch.float32)
+    padded_ampl = torch.zeros((num_samples, target_len), dtype=torch.float32)
+
+    # 3. Insert the actual data into the pre-allocated zero tensors
+    for i, (f_lst, a_lst) in enumerate(zip(df["freq"], df["ampl"])):
+        padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
+        padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
+
+    # 4. Stack into the final 3D tensor (N, target_len, 2)
+    X_padded = torch.stack((padded_freq, padded_ampl), dim=-1)
+    y_tensor = torch.tensor(df["res_freq"].values, dtype=torch.float32).view(-1, 1)
+
+    return (X_padded, y_tensor)
