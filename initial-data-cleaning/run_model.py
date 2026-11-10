@@ -8,10 +8,25 @@ import numpy as np
 
 import torch
 import tensorflow as tf
+
+# code from gemini to bypass specific error
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
+
 from torch.utils.data import DataLoader
 from torch.utils.data import TensorDataset, random_split
 
-# testing new dataset
+# code from gemini to bypass specific error
+import os
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
+os.environ['TF_XLA_AUTO_JIT'] = '0'
+os.environ['TF_CUDNN_USE_AUTOTUNE'] = '0'
+
 def prepare_data(raw_path, proc_path, stage):
     
     proc_scans = get_tension_data(proc_path, stage)
@@ -62,7 +77,7 @@ def add_res_freq_map(df):
 def prepare_torch_datasets(df, is_sig2sig=True):
     X_padded, y_tensor = create_torch_datasets(df, sig2sig=is_sig2sig)
 
-    dataset = TensorDataset(X_padded[0:100], y_tensor[0:100]) # testing on small subset
+    dataset = TensorDataset(X_padded[0:200], y_tensor[0:200]) # testing on small subset
     dataset_train, dataset_test = random_split(dataset, lengths = [0.8, 0.2], generator=torch.Generator().manual_seed(42))  # 80% train, 20% test
 
     dloader_train = DataLoader(dataset_train, batch_size=32, shuffle=True)
@@ -100,7 +115,7 @@ if __name__ == "__main__":
     save_model_path = "UNet/model01.keras"
     batch_size = 32
     patience = 6
-    optim='adam'
+    optim = 'adam'
     loss=tf.keras.losses.BinaryCrossentropy()
 
     history, training_time = train_model(model, dloader_train, epochs, save_model_path, optim, loss, batch_size, patience)
