@@ -1,3 +1,12 @@
+import os
+# 1. Disable cuDNN autotuning BEFORE TensorFlow loads
+os.environ['TF_CUDNN_USE_AUTOTUNE'] = '0'
+os.environ['TF_DETERMINISTIC_OPS'] = '1'
+
+# 2. Disable XLA compiler flags BEFORE TensorFlow loads
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
+os.environ['TF_XLA_AUTO_JIT'] = '0'
+
 from read_training_data import get_tension_data, get_raw_data, get_lengths, calculate_res_freq, create_torch_datasets, create_res_freq_map
 from training_testing import train_keras_model
 from models import sig2sig_unet
@@ -11,6 +20,8 @@ import tensorflow as tf
 
 # code from gemini to bypass specific error
 gpus = tf.config.list_physical_devices('GPU')
+tf.config.optimizer.set_jit(False)
+
 if gpus:
     try:
         for gpu in gpus:
@@ -21,11 +32,6 @@ if gpus:
 from torch.utils.data import DataLoader
 from torch.utils.data import TensorDataset, random_split
 
-# code from gemini to bypass specific error
-import os
-os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
-os.environ['TF_XLA_AUTO_JIT'] = '0'
-os.environ['TF_CUDNN_USE_AUTOTUNE'] = '0'
 
 def prepare_data(raw_path, proc_path, stage):
     
@@ -90,6 +96,11 @@ def train_model(model, dloader_train, epochs, save_model_path, optim, loss, batc
     history, training_time = train_keras_model(model, dloader_train, epochs, save_model_path, optim, loss, batch_size, patience)
     return (history, training_time)
 
+def test_model(model_path, dloader_test, batch_size):
+    model = tf.keras.models.load_model(model_path)
+    testing = model.evaluate(dloader_test, batch_size=batch_size)
+    return testing
+
 def plot_history(key, history, save_path):
     fig, ax = plt.subplots()
     ax.plot(history[key], label=f'Training {key}')
@@ -102,6 +113,10 @@ def plot_history(key, history, save_path):
 
 
 if __name__ == "__main__":
+    if len(tf.config.list_physical_devices("GPU")) == 0:
+        print("No GPU found. Exiting...")
+        exit(1)
+        
     raw_path = "/vols/dune/amh24/APA-DWA-measurements/4ml/scanData/raw/APA_APA30_PostCold_27_01_26/"
     proc_path = "/vols/dune/amh24/APA-DWA-measurements/4ml/scanData/processed/APA30_PostCold_27_01_26.json"
     stage = "DWA Development"
@@ -122,4 +137,6 @@ if __name__ == "__main__":
     plot_history('loss', history, "UNet/figures/training_loss_plot01.png")
     plot_history('mean_io_u', history, "UNet/figures/meaniou_plot01.png")
 
+    testing = test_model(save_model_path, dloader_test, batch_size)
+    print(f"Testing results\n Loss: {testing[0]} \n Mean IOU: {testing[1]}")
 
