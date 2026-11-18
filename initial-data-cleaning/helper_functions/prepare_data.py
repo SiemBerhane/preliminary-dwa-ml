@@ -5,6 +5,7 @@ import numpy as np
 import warnings
 import torch
 from scipy.signal import savgol_filter
+from sklearn import preprocessing
 
 def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"], extract_all_tensions=True):
     """
@@ -243,7 +244,7 @@ def calculate_res_freq(tensions, lengths, rho):
 
     return np.sqrt(tensions / rho) * (1 / (2*lengths))
 
-def create_torch_datasets(df, sig2sig = False):
+def create_torch_datasets(df, sig2sig = False, include_lengths = False):
     """
     Creates PyTorch datasets for the input features and target variable from the given DataFrame.
     
@@ -259,26 +260,40 @@ def create_torch_datasets(df, sig2sig = False):
     target_len = ((max_len + 63) // 64) * 64
     num_samples = len(df)
 
-    # 2. Pre-allocate the final padded tensors with zeros
     padded_freq = torch.zeros((num_samples, target_len), dtype=torch.float32)
     padded_ampl = torch.zeros((num_samples, target_len), dtype=torch.float32)
 
     if sig2sig:
         padded_y = torch.zeros((num_samples, target_len), dtype=torch.float32) 
 
-    # 3. Insert the actual data into the pre-allocated zero tensors
+        if include_lengths:
+            wire_lengths = df["length"].values
+            padded_lengths = torch.zeros((num_samples, target_len), dtype=torch.float32)
+
     if sig2sig:
-        for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df["ampl"], df["res_freq_map"])):
-            padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
-            padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
-            padded_y[i, :len(y_lst)] = torch.tensor(y_lst, dtype=torch.float32)
+
+        if include_lengths:
+            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df["ampl"], df["res_freq_map"])):
+                padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
+                padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
+                padded_lengths[i, :len(f_lst)] = torch.tensor([wire_lengths[i]] * len(f_lst), dtype=torch.float32) # scalar repeated for each freq data point
+                padded_y[i, :len(y_lst)] = torch.tensor(y_lst, dtype=torch.float32)
+        else:
+            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df["ampl"], df["res_freq_map"])):
+                padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
+                padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
+                padded_y[i, :len(y_lst)] = torch.tensor(y_lst, dtype=torch.float32)
+                
     else:
         for i, (f_lst, a_lst) in enumerate(zip(df["freq"], df["ampl"])):
             padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
             padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
 
-    # 4. Stack into the final 3D tensor (N, target_len, 2)
-    X_padded = torch.stack((padded_freq, padded_ampl), dim=-1)
+    # Stack into the final 3D tensor (N, target_len, 2)
+    if include_lengths:
+        X_padded = torch.stack((padded_freq, padded_ampl, padded_lengths), dim=-1)
+    else:
+        X_padded = torch.stack((padded_freq, padded_ampl), dim=-1)
 
     if sig2sig:
         y_tensor = padded_y
@@ -286,6 +301,20 @@ def create_torch_datasets(df, sig2sig = False):
         y_tensor = torch.tensor(df["res_freq"].values, dtype=torch.float32).view(-1, 1)
 
     return (X_padded, y_tensor)
+
+def train_scaler(feature, scaler):
+    """
+    Scales the specified features in the DataFrame using Min-Max scaling.
+
+    Args:
+        df (pd.DataFrame): A DataFrame containing the features to be scaled.
+        features (list): A list of feature names to be scaled.
+        scalaer (sklearn.preprocessing): A fitted Min-Max scaler object.
+
+    Returns:
+        pd.DataFrame: A DataFrame with the specified features scaled to the range [0, 1].
+    """
+    return scaler.fit(feature.reshape(-1, 1))
 
 def baseline_subtracted(freq: np.ndarray, ampl: np.ndarray) -> np.ndarray:
     """
@@ -318,28 +347,53 @@ def _get_num_savgol_bins(freq: np.ndarray) -> int:
         num_bins += 1
     return num_bins
 
-def create_res_freq_map(freq, res_freq, step):
+def create_res_freq_map(freq, res_freq, step, window_values):
     """
     Creates a map of resonance frequencies for each frequency reading.
-    Sets value to 1 for frequencies within 2 steps of the resonance frequency on either side, 
-    and 0 otherwise.
 
     Args:
         freq (list): A list of frequency readings.
         res_freq (list): A list of resonance frequencies corresponding to each frequency reading.
         step (float): The step size between frequency readings.
+        window_values (list): The dynamic values to place around the center index 
+                              (e.g., [0.2, 0.8, 1.0, 0.8, 0.2]). Should be an odd length.
 
     Returns:
         list: A binary list of arrays    
     
     """
     res_freq_map = []
-
+    
+    # Convert to numpy array to ensure we can slice it easily
+    window = np.array(window_values, dtype=np.float32)
+    half_width = len(window) // 2
+    
     for i in range(len(freq)):
         start_freq = freq[i][0]
-        curr_res_freq_map = np.zeros((len(freq[i]),), dtype=int)
-        index = int(round((res_freq[i] - start_freq) / step))
-        curr_res_freq_map.put([index - 2, index - 1, index, index + 1, index + 2], [1, 1, 1, 1, 1])
-        res_freq_map.append(curr_res_freq_map)
+        curr_res_freq_map = np.zeros((len(freq[i]),), dtype=np.float32)
+        
+        center_idx = int(round((res_freq[i] - start_freq) / step))
 
+        # tracks index range in freq array where the window will be placed
+        map_start = center_idx - half_width 
+        map_end = center_idx + half_width + 1
+
+        # tracks window range to be inserted into the map (in case of edge cases)
+        win_start = 0
+        win_end = len(window)
+        
+        # if the peak is too close to the start or end of the array
+        if map_start < 0:
+            win_start = abs(map_start)  # Crop the left side of the window
+            map_start = 0
+            
+        if map_end > len(curr_res_freq_map):
+            win_end -= (map_end - len(curr_res_freq_map)) # Crop the right side
+            map_end = len(curr_res_freq_map)
+            
+        if map_start < map_end: # Ensure it hasn't been completely cropped out
+            curr_res_freq_map[map_start:map_end] = window[win_start:win_end]
+            
+        res_freq_map.append(curr_res_freq_map)
+        
     return res_freq_map

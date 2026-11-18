@@ -1,5 +1,7 @@
 from models import sig2sig_unet
 import tensorflow as tf
+import torch
+import numpy as np
 import time
 
 def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss, batch_size, patience):
@@ -39,3 +41,34 @@ def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss, 
 
     model.save(save_model_path)
     return (history.history, t2-t1)
+
+def test_keras_model(model_path, data_loader, batch_size):
+    model = tf.keras.models.load_model(model_path)
+    testing = model.evaluate(data_loader, batch_size=batch_size)
+    return testing
+
+def keras_model_inference(model_path, x_freq, x_ampl):
+    """
+    Performs inference using a trained Keras model on the provided frequency and amplitude data.
+    Pads the input data to match the model's expected input shape and returns the model's output.
+
+    Args:
+        model_path (str): Path to the trained Keras model.
+        x_freq (np.ndarray): Input frequency data.
+        x_ampl (np.ndarray): Input amplitude data.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: The padded frequency [0] and the output of the model after inference, flattened to a 1D array [1]
+    """
+    model = tf.keras.models.load_model(model_path, compile=True)
+    input_length = model.get_config()["layers"][0]['config']['batch_shape'][1]
+
+    freq = np.pad(x_freq, (0, input_length - len(x_freq)), 'constant', constant_values=(0, 0))
+    ampl = np.pad(x_ampl, (0, input_length - len(x_ampl)), 'constant', constant_values=(0, 0))
+
+    freq_tensor = torch.tensor(freq, dtype=torch.float32)
+    ampl_tensor = torch.tensor(ampl, dtype=torch.float32)
+    final_tensor = torch.stack((freq_tensor, ampl_tensor), dim=1).unsqueeze(0)  # Concatenate along the channel dimension
+
+    output = model.predict(final_tensor)
+    return (freq, output.flatten())

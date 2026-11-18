@@ -52,6 +52,16 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Datasets
+datasets/
+
+#Job outputs
+errors/
+logs/
+outputs/
+*.job
+*.sh
+
 # Translations
 *.mo
 *.pot
