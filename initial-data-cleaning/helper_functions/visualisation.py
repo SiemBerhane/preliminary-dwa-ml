@@ -1,7 +1,7 @@
 from matplotlib import pyplot as plt
 
-def plot_scans(freq, ampl, wire, res_freq=None):
-    fig, ax = plt.subplots(figsize=(10, 6))
+def plot_scans(ax, freq, ampl, wire, res_freq=None):
+    # fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(freq, ampl, color='blue', linewidth=1.5)
 
     if res_freq is not None:
@@ -12,5 +12,7 @@ def plot_scans(freq, ampl, wire, res_freq=None):
     ax.set_xlabel('Frequency (Hz)', fontsize=14)
     ax.set_ylabel('Amplitude', fontsize=14)
     ax.grid(True)
-    plt.tight_layout()
-    plt.show()
+    # plt.tight_layout()
+    # plt.show()
+
+    return ax

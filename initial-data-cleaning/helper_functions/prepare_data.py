@@ -347,6 +347,40 @@ def _get_num_savgol_bins(freq: np.ndarray) -> int:
         num_bins += 1
     return num_bins
 
+def smooth_data(freq, ampl):
+    bg_sub = baseline_subtracted(freq, ampl)
+    bg_sub_norm = bg_sub / np.max(bg_sub)
+
+    # Get the derivative/slope of the trace
+    bg_sub_norm_dfda = np.array([slope_near_bin(freq, bg_sub_norm, i, 5) for i in range(len(freq))])
+    bg_sub_norm_dfda /= np.max(bg_sub_norm_dfda)
+
+    # The ringing resonances appear to be sin-like. So we add the square of the trace to the square of the derivative, which results in peaks where 
+    # the trace is sin-like due to sin^2 + cos^2 being maximized.
+    pythag = bg_sub_norm**2+bg_sub_norm_dfda**2
+    # Smooth out the processed trace
+    pythag_smooth = savgol_filter(pythag, _get_num_savgol_bins(freq), 3)
+    
+    # Normalize the processed trace
+    pythag_smooth /= np.max(pythag_smooth)
+    return pythag_smooth
+
+def slope_near_bin(freqs, amps, i, window):
+    """
+    Calculates the slope of the amplitude data near a specific frequency bin. 
+    """
+    df = freqs[1]-freqs[0]
+    startBin = i-int((window-1)/2)
+    endBin = i+int((window-1)/2)
+    if startBin < 0:
+        endBin = endBin - startBin
+        startBin = 0
+    length = len(freqs)
+    if endBin > length - 1:
+        endBin = length - 1
+        startBin = startBin - (endBin - (length - 1))
+    return (amps[endBin]-amps[startBin])/df
+
 def create_res_freq_map(freq, res_freq, step, window_values):
     """
     Creates a map of resonance frequencies for each frequency reading.
