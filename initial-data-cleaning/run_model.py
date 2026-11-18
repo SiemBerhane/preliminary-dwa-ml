@@ -131,9 +131,33 @@ def split_data(df, test_frac=0.8):
         df (pd.DataFrame): The input DataFrame to be split.
         test_frac (float): Fraction of the data to be used for testing. Default is 0.8 (80% test, 20% train).
     """
-    
+
     df_train, df_test = train_test_split(df, test_size=test_frac, random_state=42)
     return (df_train, df_test)
+
+def baseline_subtract(freqs, ampls):
+    """
+    Performs background subtraction on the amplitude data by fitting a polynomial to the data and subtracting it.
+    Calls the baseline_subtract function from the helper_functions.prepare_data module.
+     Args:
+        freq (list): 2D list of all frequency data for each scan.
+        ampl (list): 2d list of all amplitude data for each scan.
+    Returns:
+        list: 2D list of smoothed amplitude data for each scan.
+    """
+    return [prepare_data.baseline_subtracted(freq, ampl) for freq, ampl in zip(freqs, ampls)]
+
+def smooth_data(freqs, ampls):
+    """
+    Smooths the amplitude data using a Savitzky-Golay filter.
+    Calls the smooth_data function from the helper_functions.prepare_data module.
+    Args:
+        freq (list): 2D list of all frequency data for each scan.
+        ampl (list): 2d list of all amplitude data for each scan.
+    Returns:
+        list: 2D list of smoothed amplitude data for each scan.
+    """
+    return [prepare_data.smooth_data(freq, ampl) for freq, ampl in zip(freqs, ampls)]
 
 def scale_data(df_train, df_test, scaler):
     """
@@ -241,7 +265,7 @@ if __name__ == "__main__":
     include_lengths_options = [False, True]
     scalers = [preprocessing.StandardScaler, preprocessing.MinMaxScaler, None]
     
-    count = 66 # for labelling model iterations
+    count = 0 # for labelling model iterations
 
     batch_size = [32]
     patience = 8
