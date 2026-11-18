@@ -244,18 +244,29 @@ def calculate_res_freq(tensions, lengths, rho):
 
     return np.sqrt(tensions / rho) * (1 / (2*lengths))
 
-def create_torch_datasets(df, sig2sig = False, include_lengths = False):
+def create_torch_datasets(df, sig2sig = False, include_lengths = False, ampl_proc="raw"):
     """
     Creates PyTorch datasets for the input features and target variable from the given DataFrame.
     
     Args:
         df (pd.DataFrame): A DataFrame containing the input features and target variable.
         sig2sig (bool): A flag indicating whether the target variable is a signal (True) or a scalar value (False). Default is False.
+        include_lengths (bool): A flag indicating whether to include wire lengths in the input features. Default is False.
+        ampl_proc (str): Type of amplitude data to use ("raw", "bg_sub", "smooth"). Defaults to "raw" if invalid ampl_proc is specified.
 
     Returns:
         tuple: A tuple containing the input features tensor (X_tensor) and target variable tensor (y_tensor).
     """
-
+    if ampl_proc == "raw":
+        ampl_name = "ampl"
+    elif ampl_proc == "bg_sub":
+        ampl_name = "baseline_subtracted_ampl"
+    elif ampl_proc == "smooth":
+        ampl_name = "smoothed_ampl"
+    else:
+        # raise Warning("Invalid scan_type specified. Must be 'raw', 'bg_sub', or 'smooth'.")
+        ampl_name = "ampl" # default to raw if invalid scan_type is specified
+    
     max_len = df["freq"].apply(len).max()
     target_len = ((max_len + 63) // 64) * 64
     num_samples = len(df)
@@ -273,19 +284,19 @@ def create_torch_datasets(df, sig2sig = False, include_lengths = False):
     if sig2sig:
 
         if include_lengths:
-            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df["ampl"], df["res_freq_map"])):
+            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df[ampl_name], df["res_freq_map"])):
                 padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
                 padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
                 padded_lengths[i, :len(f_lst)] = torch.tensor([wire_lengths[i]] * len(f_lst), dtype=torch.float32) # scalar repeated for each freq data point
                 padded_y[i, :len(y_lst)] = torch.tensor(y_lst, dtype=torch.float32)
         else:
-            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df["ampl"], df["res_freq_map"])):
+            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df[ampl_name], df["res_freq_map"])):
                 padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
                 padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
                 padded_y[i, :len(y_lst)] = torch.tensor(y_lst, dtype=torch.float32)
                 
     else:
-        for i, (f_lst, a_lst) in enumerate(zip(df["freq"], df["ampl"])):
+        for i, (f_lst, a_lst) in enumerate(zip(df["freq"], df[ampl_name])):
             padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
             padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
 
@@ -301,7 +312,6 @@ def create_torch_datasets(df, sig2sig = False, include_lengths = False):
         y_tensor = torch.tensor(df["res_freq"].values, dtype=torch.float32).view(-1, 1)
 
     return (X_padded, y_tensor)
-
 def train_scaler(feature, scaler):
     """
     Scales the specified features in the DataFrame using Min-Max scaling.

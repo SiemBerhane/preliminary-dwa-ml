@@ -195,13 +195,14 @@ def scale_data(df_train, df_test, scaler):
 
     return (df_train, df_test)
 
-def prepare_torch_datasets(df, is_sig2sig=True, include_lengths=False):
+def prepare_torch_datasets(df, is_sig2sig=True, include_lengths=False, ampl_proc="raw"):
     """
     Prepares PyTorch datasets and dataloaders from a pandas DataFrame.
 
     Args:
         df (pd.DataFrame): The input DataFrame.
         is_sig2sig (bool): Whether to create a signal-to-signal dataset.
+        ampl_proc (str): Type of amplitude data to use ("raw", "bg_sub", "smooth" ).
 
     Returns:
         dloader_train (torch.utils.data.DataLoader): PyTorch DataLoader for the training set.
@@ -209,7 +210,7 @@ def prepare_torch_datasets(df, is_sig2sig=True, include_lengths=False):
         win_size (int): The window size of the input data.
         channel (int): The number of channels in the input data.
     """
-    X_padded, y_tensor = prepare_data.create_torch_datasets(df, sig2sig=is_sig2sig, include_lengths=include_lengths)
+    X_padded, y_tensor = prepare_data.create_torch_datasets(df, sig2sig=is_sig2sig, include_lengths=include_lengths, ampl_proc=ampl_proc)
     dataset = TensorDataset(X_padded, y_tensor)
     dloader = DataLoader(dataset, batch_size=32, shuffle=True)
     return (dloader, X_padded.shape[1], X_padded.shape[2])
