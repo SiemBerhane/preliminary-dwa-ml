@@ -329,7 +329,8 @@ def baseline_subtracted(freq: np.ndarray, ampl: np.ndarray) -> np.ndarray:
     """
     num_bins = _get_num_savgol_bins(freq)
     smooth_curve = savgol_filter(ampl, num_bins, 3)
-    return ampl - smooth_curve
+    signal = ampl - smooth_curve
+    return signal
 
 def _get_num_savgol_bins(freq: np.ndarray) -> int:
     """

@@ -9,8 +9,8 @@ os.environ['TF_DETERMINISTIC_OPS'] = '1'
 os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
 os.environ['TF_XLA_AUTO_JIT'] = '0'
 
-from helper_functions.prepare_data import get_tension_data, get_raw_data, get_lengths, calculate_res_freq, create_torch_datasets, create_res_freq_map
-from helper_functions.training_testing import train_keras_model, test_keras_model
+from helper_functions import prepare_data
+from helper_functions import training_testing
 from models import sig2sig_unet
 
 from matplotlib import pyplot as plt
@@ -36,7 +36,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data import TensorDataset, random_split
 
 
-def prepare_data(raw_path, proc_path, stage, dataset_name):
+def prepare_scan_data(raw_path, proc_path, stage, dataset_name):
     """
     Prepares the dataset by merging processed and raw data, calculating resonant frequencies, and saving the final DataFrame to a pickle file.
     
@@ -50,9 +50,9 @@ def prepare_data(raw_path, proc_path, stage, dataset_name):
         pd.DataFrame: The final combined DataFrame with calculated resonant frequencies.
     """
 
-    proc_scans = get_tension_data(proc_path, stage)
+    proc_scans = prepare_data.get_tension_data(proc_path, stage)
     keys_to_remove = {"scanEndMode", "measuredBy", "apaUuid", "type"}
-    raw_scans = get_raw_data(raw_path, keys_to_remove)
+    raw_scans = prepare_data.get_raw_data(raw_path, keys_to_remove)
 
     proc_df = pd.DataFrame(proc_scans)
     raw_df = pd.DataFrame(raw_scans)
@@ -60,10 +60,10 @@ def prepare_data(raw_path, proc_path, stage, dataset_name):
     comb_df = pd.merge(raw_df, proc_df, on=["uid", "parent_folder"], how="outer")
     final_comb_df = comb_df.dropna(subset=['tension'])
 
-    u_side_lengths = get_lengths("/vols/dune/sb3423/DWA/training-data/tensions/U_Layer_Tension_Template.xlsx", "U")
-    v_side_lengths = get_lengths("/vols/dune/sb3423/DWA/training-data/tensions/V_Layer_Tension_Template.xlsx", "V")
-    x_side_lengths = get_lengths("/vols/dune/sb3423/DWA/training-data/tensions/X_Layer_Tension_Template.xlsx", "X")
-    g_side_lengths = get_lengths("/vols/dune/sb3423/DWA/training-data/tensions/G_Layer_Tension_Template.xlsx", "G")
+    u_side_lengths = prepare_data.get_lengths("/vols/dune/sb3423/DWA/training-data/tensions/U_Layer_Tension_Template.xlsx", "U")
+    v_side_lengths = prepare_data.get_lengths("/vols/dune/sb3423/DWA/training-data/tensions/V_Layer_Tension_Template.xlsx", "V")
+    x_side_lengths = prepare_data.get_lengths("/vols/dune/sb3423/DWA/training-data/tensions/X_Layer_Tension_Template.xlsx", "X")
+    g_side_lengths = prepare_data.get_lengths("/vols/dune/sb3423/DWA/training-data/tensions/G_Layer_Tension_Template.xlsx", "G")
 
     full_u_df = pd.merge(final_comb_df, u_side_lengths, on="uid", how="inner") # this only includes U layer wires
     full_v_df = pd.merge(final_comb_df, v_side_lengths, on="uid", how="inner")
@@ -80,8 +80,11 @@ def prepare_data(raw_path, proc_path, stage, dataset_name):
     rho = 1.52e-4
     final_df['res_freq'] = res_freq(final_df, rho)
 
+    final_df['baseline_subtracted_ampl'] = baseline_subtract(final_df['freq'].values, final_df['ampl'].values)
+    final_df['smoothed_ampl'] = smooth_data(final_df['freq'].values, final_df['baseline_subtracted_ampl'].values)
+
     final_df = final_df.drop(columns=["segment_id", "channel_index", "layer", "stage", "headboardNumber", "side"])
-    final_df.save_to_pickle(f"datasets/{dataset_name}.pkl")
+    final_df.to_pickle(f"datasets/{dataset_name}.pkl")
     
     return final_df
 
@@ -101,7 +104,7 @@ def res_freq(df, rho):
 
     tension = df['tension'].values
     lengths = df['length'].values / 1000 # in meters
-    return calculate_res_freq(tension, lengths, rho)
+    return prepare_data.calculate_res_freq(tension, lengths, rho)
 
 def add_res_freq_map(df, window_values=[0.2, 0.8, 1.0, 0.8, 0.2]):
     """
@@ -121,7 +124,7 @@ def add_res_freq_map(df, window_values=[0.2, 0.8, 1.0, 0.8, 0.2]):
     rounded_res_freq = np.round(res_freq * 8, 0) / 8
     step = 0.125
 
-    return create_res_freq_map(freq, rounded_res_freq, step, window_values)
+    return prepare_data.create_res_freq_map(freq, rounded_res_freq, step, window_values)
 
 def split_data(df, test_frac=0.8):
     """
@@ -145,7 +148,8 @@ def baseline_subtract(freqs, ampls):
     Returns:
         list: 2D list of smoothed amplitude data for each scan.
     """
-    return [prepare_data.baseline_subtracted(freq, ampl) for freq, ampl in zip(freqs, ampls)]
+    smoothed_ampls = [prepare_data.baseline_subtracted(freq, ampl) for freq, ampl in zip(freqs, ampls)]
+    return smoothed_ampls
 
 def smooth_data(freqs, ampls):
     """
@@ -157,7 +161,8 @@ def smooth_data(freqs, ampls):
     Returns:
         list: 2D list of smoothed amplitude data for each scan.
     """
-    return [prepare_data.smooth_data(freq, ampl) for freq, ampl in zip(freqs, ampls)]
+    smoothed_ampls = [prepare_data.smooth_data(freq, ampl) for freq, ampl in zip(freqs, ampls)]
+    return smoothed_ampls
 
 def scale_data(df_train, df_test, scaler):
     """
@@ -204,18 +209,18 @@ def prepare_torch_datasets(df, is_sig2sig=True, include_lengths=False):
         win_size (int): The window size of the input data.
         channel (int): The number of channels in the input data.
     """
-    X_padded, y_tensor = create_torch_datasets(df, sig2sig=is_sig2sig, include_lengths=include_lengths)
+    X_padded, y_tensor = prepare_data.create_torch_datasets(df, sig2sig=is_sig2sig, include_lengths=include_lengths)
     dataset = TensorDataset(X_padded, y_tensor)
     dloader = DataLoader(dataset, batch_size=32, shuffle=True)
     return (dloader, X_padded.shape[1], X_padded.shape[2])
 
 def train_model(model, dloader_train, epochs, save_model_path, optim, loss, batch_size, patience):
     
-    history, training_time = train_keras_model(model, dloader_train, epochs, save_model_path, optim, loss, batch_size, patience)
+    history, training_time = training_testing.train_keras_model(model, dloader_train, epochs, save_model_path, optim, loss, batch_size, patience)
     return (history, training_time)
 
 def test_model(model_path, dloader_test, batch_size):
-    return test_keras_model(model_path, dloader_test, batch_size)
+    return training_testing.test_keras_model(model_path, dloader_test, batch_size)
 
 def plot_history(key, history, save_path):
     fig, ax = plt.subplots()
@@ -252,7 +257,7 @@ if __name__ == "__main__":
         df = pd.read_pickle(f"datasets/{dataset_name}.pkl")
     else:
         print(f"Preparing dataset and saving to datasets/{dataset_name}.pkl")
-        df = prepare_data(raw_path, proc_path, stage, dataset_name)
+        df = prepare_scan_data(raw_path, proc_path, stage, dataset_name)
     
 
     #add experimentation methods
