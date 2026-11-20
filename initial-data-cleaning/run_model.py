@@ -17,6 +17,8 @@ from matplotlib import pyplot as plt
 import pandas as pd
 import numpy as np
 
+from scipy.signal import windows
+
 import torch
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
@@ -164,38 +166,38 @@ def smooth_data(freqs, ampls):
     smoothed_ampls = [prepare_data.smooth_data(freq, ampl) for freq, ampl in zip(freqs, ampls)]
     return smoothed_ampls
 
-def scale_data(df_train, df_test, scaler):
+def scale_data(train, test, scaler):
     """
     Scales data using the provided scaler. The scaler is fitted on the training data 
-    and then applied to both training and testing data.
+    and then applied to both training and testing data. Inputs should be dataframe columns.
 
     Args:
-        df_train (pd.DataFrame): DataFrame containing the training data.
-        df_test (pd.DataFrame): DataFrame containing the testing data.
+        train (pd.Series): Series containing the training data.
+        test (pd.Series): Series containing the testing data.
         scaler (sklearn.preprocessing): Sklearn scaler object (e.g., StandardScaler, MinMaxScaler) to scale the data.
         None: If no scaling is desired.
 
     Returns:
-        df_train (pd.DataFrame): Scaled training DataFrame.
-        df_test (pd.DataFrame): Scaled testing DataFrame.
+        train (pd.Series): Scaled training Series.
+        test (pd.Series): Scaled testing Series.
     """
 
     if scaler is None:
-        return (df_train, df_test)
+        return (train, test)
 
     # amplitude data has variable length so will scale each amplitude array individually 
-    flat_train = np.concatenate(df_train['ampl'].values).reshape(-1, 1)
+    flat_train = np.concatenate(train.values).reshape(-1, 1)
     scaler.fit(flat_train)
 
-    df_train['ampl'] = df_train['ampl'].apply(
+    train = train.apply(
         lambda x: scaler.transform(np.array(x).reshape(-1, 1)).flatten().tolist())
 
-    df_test['ampl'] = df_test['ampl'].apply(
+    test = test.apply(
         lambda x: scaler.transform(np.array(x).reshape(-1, 1)).flatten().tolist())
 
-    return (df_train, df_test)
+    return (train, test)
 
-def prepare_torch_datasets(df, is_sig2sig=True, include_lengths=False, ampl_proc="raw"):
+def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, ampl_proc="raw"):
     """
     Prepares PyTorch datasets and dataloaders from a pandas DataFrame.
 
@@ -210,7 +212,7 @@ def prepare_torch_datasets(df, is_sig2sig=True, include_lengths=False, ampl_proc
         win_size (int): The window size of the input data.
         channel (int): The number of channels in the input data.
     """
-    X_padded, y_tensor = prepare_data.create_torch_datasets(df, sig2sig=is_sig2sig, include_lengths=include_lengths, ampl_proc=ampl_proc)
+    X_padded, y_tensor = prepare_data.create_torch_datasets(df, max_len, sig2sig=is_sig2sig, include_lengths=include_lengths, ampl_proc=ampl_proc)
     dataset = TensorDataset(X_padded, y_tensor)
     dloader = DataLoader(dataset, batch_size=32, shuffle=True)
     return (dloader, X_padded.shape[1], X_padded.shape[2])
@@ -262,27 +264,31 @@ if __name__ == "__main__":
     
 
     #add experimentation methods
-    win_values_array = [
-        # [1, 1, 1, 1, 1],
-        [0.2, 0.8, 1.0, 0.8, 0.2],
-        [1, 1, 1, 1, 1, 1, 1],
-        [0.5, 1.0, 0.5]
-    ]
+    win_std = np.linspace(1, 20, 5) # standard deviation values for gaussian window
+    win_length = np.linspace(1, 31, 2, dtype=int) # length values for gaussian window, must be odd
+    win_values = windows.gaussian(win_length, std=win_std)
     include_lengths_options = [False, True]
-    scalers = [preprocessing.StandardScaler, preprocessing.MinMaxScaler, None]
+    freq_scalers = [preprocessing.MinMaxScaler, None]
+    len_normalisation = [True, False]
+    ampl_smoothing = ["raw", "bg_sub", "smooth"]
     
     count = 0 # for labelling model iterations
 
     batch_size = [32]
     patience = 8
     epochs = [100] # keep it large, early stopping will handle the actual number of epochs
-    optimisers = [tf.keras.optimizers.AdamW, tf.keras.optimizers.Adam, tf.keras.optimizers.SGD]
-    losses=[tf.keras.losses.BinaryCrossentropy, 
-            tf.keras.losses.Dice, tf.keras.losses.BinaryFocalCrossentropy]
+    optimisers = [tf.keras.optimizers.BinaryCrossentropy]
+    losses = [tf.keras.losses.Adam]
+    # optimisers = [tf.keras.optimizers.AdamW, tf.keras.optimizers.Adam, tf.keras.optimizers.SGD]
+    # losses=[tf.keras.losses.BinaryCrossentropy, 
+    #         tf.keras.losses.Dice, tf.keras.losses.BinaryFocalCrossentropy]
 
-    results_df = pd.DataFrame(columns=["Training Loss", "Training Mean IOU", 
-                                       "Testing Loss", "Testing Mean IOU", "Window Values", "Include Lengths", "Scaler", 
-                                       "Epochs", "Batch Size", "Optimizer", "Loss Function", "Training Time (s)", "Name"])
+    results_df = pd.DataFrame(columns=["Name", "Training Loss", "Training Mean IOU", 
+                                       "Testing Loss", "Testing Mean IOU", "Window std", "Window length", "Include Lengths", 
+                                       "Length normalisation", "Frequency Scaler",  "Amplitude Scaler", "Amplitude smoothing",
+                                       "Epochs", "Batch Size", "Optimizer", "Loss Function", "Training Time (s)"])
+
+    max_len = df["freq"].apply(len).max()
 
     for win_values in win_values_array:
         for include_lengths in include_lengths_options:
@@ -308,8 +314,8 @@ if __name__ == "__main__":
                                 scaled_df_train, scaled_df_test = scale_data(df_train, df_test, scaler)
                                 
                                 # Prepare datasets
-                                dloader_train, win_size, channel = prepare_torch_datasets(scaled_df_train, is_sig2sig=True, include_lengths=include_lengths)
-                                dloader_test, _, _ = prepare_torch_datasets(scaled_df_test, is_sig2sig=True, include_lengths=include_lengths)
+                                dloader_train, win_size, channel = prepare_torch_datasets(scaled_df_train, max_len, is_sig2sig=True, include_lengths=include_lengths)
+                                dloader_test, _, _ = prepare_torch_datasets(scaled_df_test, max_len, is_sig2sig=True, include_lengths=include_lengths)
                                 
                                 # Create model
                                 model = sig2sig_unet(win_size, channel)

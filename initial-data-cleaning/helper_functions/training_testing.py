@@ -47,7 +47,7 @@ def test_keras_model(model_path, data_loader, batch_size):
     testing = model.evaluate(data_loader, batch_size=batch_size)
     return testing
 
-def keras_model_inference(model_path, x_freq, x_ampl):
+def keras_model_inference(model_path, x_freq, x_ampl, x_lengths=None):
     """
     Performs inference using a trained Keras model on the provided frequency and amplitude data.
     Pads the input data to match the model's expected input shape and returns the model's output.
@@ -63,12 +63,25 @@ def keras_model_inference(model_path, x_freq, x_ampl):
     model = tf.keras.models.load_model(model_path, compile=True)
     input_length = model.get_config()["layers"][0]['config']['batch_shape'][1]
 
-    freq = np.pad(x_freq, (0, input_length - len(x_freq)), 'constant', constant_values=(0, 0))
-    ampl = np.pad(x_ampl, (0, input_length - len(x_ampl)), 'constant', constant_values=(0, 0))
+    x_freq = np.asarray(x_freq).reshape(-1)
+    x_ampl = np.asarray(x_ampl).reshape(-1)
+
+    freq = np.zeros(input_length, dtype=np.float32)
+    ampl = np.zeros(input_length, dtype=np.float32)
+    freq[:min(input_length, len(x_freq))] = x_freq[:input_length]
+    ampl[:min(input_length, len(x_ampl))] = x_ampl[:input_length]
 
     freq_tensor = torch.tensor(freq, dtype=torch.float32)
     ampl_tensor = torch.tensor(ampl, dtype=torch.float32)
-    final_tensor = torch.stack((freq_tensor, ampl_tensor), dim=1).unsqueeze(0)  # Concatenate along the channel dimension
+
+    if x_lengths is not None:
+        lengths = np.zeros(input_length, dtype=np.float32)
+        data_length = min(input_length, len(x_freq))
+        lengths[:data_length] = float(x_lengths)
+        lengths_tensor = torch.tensor(lengths, dtype=torch.float32)
+        final_tensor = torch.stack((freq_tensor, ampl_tensor, lengths_tensor), dim=1).unsqueeze(0)
+    else:
+        final_tensor = torch.stack((freq_tensor, ampl_tensor), dim=1).unsqueeze(0)  # Concatenate along the channel dimension
 
     output = model.predict(final_tensor)
     return (freq, output.flatten())

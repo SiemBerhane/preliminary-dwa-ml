@@ -244,7 +244,7 @@ def calculate_res_freq(tensions, lengths, rho):
 
     return np.sqrt(tensions / rho) * (1 / (2*lengths))
 
-def create_torch_datasets(df, sig2sig = False, include_lengths = False, ampl_proc="raw"):
+def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False, ampl_proc="raw"):
     """
     Creates PyTorch datasets for the input features and target variable from the given DataFrame.
     
@@ -267,8 +267,7 @@ def create_torch_datasets(df, sig2sig = False, include_lengths = False, ampl_pro
         # raise Warning("Invalid scan_type specified. Must be 'raw', 'bg_sub', or 'smooth'.")
         ampl_name = "ampl" # default to raw if invalid scan_type is specified
     
-    max_len = df["freq"].apply(len).max()
-    target_len = ((max_len + 63) // 64) * 64
+    target_len = ((max_len + 63) // 64) * 64 # Round up to the nearest multiple of 64 for GPU efficiency
     num_samples = len(df)
 
     padded_freq = torch.zeros((num_samples, target_len), dtype=torch.float32)
@@ -307,7 +306,7 @@ def create_torch_datasets(df, sig2sig = False, include_lengths = False, ampl_pro
         X_padded = torch.stack((padded_freq, padded_ampl), dim=-1)
 
     if sig2sig:
-        y_tensor = padded_y
+        y_tensor = padded_y.unsqueeze(-1)
     else:
         y_tensor = torch.tensor(df["res_freq"].values, dtype=torch.float32).view(-1, 1)
 
