@@ -55,6 +55,12 @@ cover/
 # Datasets
 datasets/
 
+# UNet experimential models
+UNet/
+
+# copying figures are saved here - no need to upload to github
+output.png 
+
 #Job outputs
 errors/
 logs/

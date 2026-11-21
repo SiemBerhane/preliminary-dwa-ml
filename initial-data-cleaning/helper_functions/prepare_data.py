@@ -244,7 +244,7 @@ def calculate_res_freq(tensions, lengths, rho):
 
     return np.sqrt(tensions / rho) * (1 / (2*lengths))
 
-def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False, ampl_proc="raw"):
+def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False, ampl_proc="raw", is_freq_scaled=False):
     """
     Creates PyTorch datasets for the input features and target variable from the given DataFrame.
     
@@ -255,7 +255,10 @@ def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False,
         ampl_proc (str): Type of amplitude data to use ("raw", "bg_sub", "smooth"). Defaults to "raw" if invalid ampl_proc is specified.
 
     Returns:
-        tuple: A tuple containing the input features tensor (X_tensor) and target variable tensor (y_tensor).
+        tuple: A tuple containing the input features tensor (X_tensor), target
+        variable tensor (y_tensor), and sample-weight tensor (sample_weights).
+        For signal-to-signal datasets, sample_weights has shape
+        (num_samples, target_len) and is 1 for real data and 0 for padding.
     """
     if ampl_proc == "raw":
         ampl_name = "ampl"
@@ -266,12 +269,18 @@ def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False,
     else:
         # raise Warning("Invalid scan_type specified. Must be 'raw', 'bg_sub', or 'smooth'.")
         ampl_name = "ampl" # default to raw if invalid scan_type is specified
+
+    if is_freq_scaled:
+        freq_name = "scaled_freq"
+    else:
+        freq_name = "freq"
     
     target_len = ((max_len + 63) // 64) * 64 # Round up to the nearest multiple of 64 for GPU efficiency
     num_samples = len(df)
 
     padded_freq = torch.zeros((num_samples, target_len), dtype=torch.float32)
     padded_ampl = torch.zeros((num_samples, target_len), dtype=torch.float32)
+    padded_sample_weights = torch.zeros((num_samples, target_len), dtype=torch.float32)
 
     if sig2sig:
         padded_y = torch.zeros((num_samples, target_len), dtype=torch.float32) 
@@ -283,21 +292,28 @@ def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False,
     if sig2sig:
 
         if include_lengths:
-            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df[ampl_name], df["res_freq_map"])):
-                padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
-                padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
-                padded_lengths[i, :len(f_lst)] = torch.tensor([wire_lengths[i]] * len(f_lst), dtype=torch.float32) # scalar repeated for each freq data point
-                padded_y[i, :len(y_lst)] = torch.tensor(y_lst, dtype=torch.float32)
+            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df[freq_name], df[ampl_name], df["res_freq_map"])):
+                valid_len = min(len(f_lst), target_len)
+                padded_freq[i, :valid_len] = torch.tensor(f_lst[:valid_len], dtype=torch.float32)
+                padded_ampl[i, :valid_len] = torch.tensor(a_lst[:valid_len], dtype=torch.float32)
+                padded_lengths[i, :valid_len] = torch.tensor([wire_lengths[i]] * valid_len, dtype=torch.float32)
+                padded_y[i, :valid_len] = torch.tensor(y_lst[:valid_len], dtype=torch.float32)
+                padded_sample_weights[i, :valid_len] = 1.0
         else:
-            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df["freq"], df[ampl_name], df["res_freq_map"])):
-                padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
-                padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
-                padded_y[i, :len(y_lst)] = torch.tensor(y_lst, dtype=torch.float32)
+            for i, (f_lst, a_lst, y_lst) in enumerate(zip(df[freq_name], df[ampl_name], df["res_freq_map"])):
+                valid_len = min(len(f_lst), target_len)
+                padded_freq[i, :valid_len] = torch.tensor(f_lst[:valid_len], dtype=torch.float32)
+                padded_ampl[i, :valid_len] = torch.tensor(a_lst[:valid_len], dtype=torch.float32)
+                padded_y[i, :valid_len] = torch.tensor(y_lst[:valid_len], dtype=torch.float32)
+                padded_sample_weights[i, :valid_len] = 1.0
                 
     else:
-        for i, (f_lst, a_lst) in enumerate(zip(df["freq"], df[ampl_name])):
-            padded_freq[i, :len(f_lst)] = torch.tensor(f_lst, dtype=torch.float32)
-            padded_ampl[i, :len(a_lst)] = torch.tensor(a_lst, dtype=torch.float32)
+        for i, (f_lst, a_lst) in enumerate(zip(df[freq_name], df[ampl_name])):
+            valid_len = min(len(f_lst), target_len)
+            padded_freq[i, :valid_len] = torch.tensor(f_lst[:valid_len], dtype=torch.float32)
+            padded_ampl[i, :valid_len] = torch.tensor(a_lst[:valid_len], dtype=torch.float32)
+
+        padded_sample_weights = torch.ones((num_samples, 1), dtype=torch.float32)
 
     # Stack into the final 3D tensor (N, target_len, 2)
     if include_lengths:
@@ -310,7 +326,8 @@ def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False,
     else:
         y_tensor = torch.tensor(df["res_freq"].values, dtype=torch.float32).view(-1, 1)
 
-    return (X_padded, y_tensor)
+    return (X_padded, y_tensor, padded_sample_weights)
+
 def train_scaler(feature, scaler):
     """
     Scales the specified features in the DataFrame using Min-Max scaling.

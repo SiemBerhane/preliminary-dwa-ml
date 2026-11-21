@@ -16,6 +16,7 @@ from models import sig2sig_unet
 from matplotlib import pyplot as plt
 import pandas as pd
 import numpy as np
+import random
 
 from scipy.signal import windows
 
@@ -128,13 +129,13 @@ def add_res_freq_map(df, window_values=[0.2, 0.8, 1.0, 0.8, 0.2]):
 
     return prepare_data.create_res_freq_map(freq, rounded_res_freq, step, window_values)
 
-def split_data(df, test_frac=0.8):
+def split_data(df, test_frac=0.2):
     """
     Splits the DataFrame into training and testing sets based on the specified test fraction.
     
     Args:
         df (pd.DataFrame): The input DataFrame to be split.
-        test_frac (float): Fraction of the data to be used for testing. Default is 0.8 (80% test, 20% train).
+        test_frac (float): Fraction of the data to be used for testing. Default is 0.2 (80% test, 20% train).
     """
 
     df_train, df_test = train_test_split(df, test_size=test_frac, random_state=42)
@@ -197,7 +198,19 @@ def scale_data(train, test, scaler):
 
     return (train, test)
 
-def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, ampl_proc="raw"):
+def normalise_lengths(lengths):
+    """"
+    Normalises the lengths to the range [0, 1] by dividing by the maximum length.
+
+    Args:
+        lengths (np.ndarray): Array of lengths to be normalised.
+
+    Returns:
+        np.ndarray: Array of normalised lengths in the range [0, 1].
+    """
+    return lengths / np.max(lengths)
+
+def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, ampl_proc="raw", is_freq_scaled=False):
     """
     Prepares PyTorch datasets and dataloaders from a pandas DataFrame.
 
@@ -212,8 +225,15 @@ def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, 
         win_size (int): The window size of the input data.
         channel (int): The number of channels in the input data.
     """
-    X_padded, y_tensor = prepare_data.create_torch_datasets(df, max_len, sig2sig=is_sig2sig, include_lengths=include_lengths, ampl_proc=ampl_proc)
-    dataset = TensorDataset(X_padded, y_tensor)
+    X_padded, y_tensor, sample_weights = prepare_data.create_torch_datasets(
+        df,
+        max_len,
+        sig2sig=is_sig2sig,
+        include_lengths=include_lengths,
+        ampl_proc=ampl_proc,
+        is_freq_scaled=is_freq_scaled
+    )
+    dataset = TensorDataset(X_padded, y_tensor, sample_weights)
     dloader = DataLoader(dataset, batch_size=32, shuffle=True)
     return (dloader, X_padded.shape[1], X_padded.shape[2])
 
@@ -264,122 +284,89 @@ if __name__ == "__main__":
     
 
     #add experimentation methods
-    win_std = np.linspace(1, 20, 5) # standard deviation values for gaussian window
-    win_length = np.linspace(1, 31, 2, dtype=int) # length values for gaussian window, must be odd
-    win_values = windows.gaussian(win_length, std=win_std)
-    include_lengths_options = [False, True]
-    freq_scalers = [preprocessing.MinMaxScaler, None]
-    len_normalisation = [True, False]
-    ampl_smoothing = ["raw", "bg_sub", "smooth"]
+    low, high, n = 3, 51, 5  # inclusive range
+    win_lens = random.sample(range(low | 1, high + 1, 2), k=n) # length values for gaussian window, must be odd
+    win_stds = random.sample(range(low, high), k=n)
+    # win_values = [windows.gaussian(win_len, std=win_std) for win_len in win_lens for win_std in win_stds]
+    include_lengths_options = True
+    scaler = preprocessing.MinMaxScaler
+    len_normalisation = True
+    ampl_smoothing = "smooth"
     
     count = 0 # for labelling model iterations
 
-    batch_size = [32]
+    batch_size = 32
     patience = 8
-    epochs = [100] # keep it large, early stopping will handle the actual number of epochs
-    optimisers = [tf.keras.optimizers.BinaryCrossentropy]
-    losses = [tf.keras.losses.Adam]
+    epochs = 100 # keep it large, early stopping will handle the actual number of epochs
+    loss_class = tf.keras.losses.BinaryCrossentropy
+    optimiser_class = tf.keras.optimizers.AdamW
     # optimisers = [tf.keras.optimizers.AdamW, tf.keras.optimizers.Adam, tf.keras.optimizers.SGD]
     # losses=[tf.keras.losses.BinaryCrossentropy, 
     #         tf.keras.losses.Dice, tf.keras.losses.BinaryFocalCrossentropy]
 
     results_df = pd.DataFrame(columns=["Name", "Training Loss", "Training Mean IOU", 
-                                       "Testing Loss", "Testing Mean IOU", "Window std", "Window length", "Include Lengths", 
-                                       "Length normalisation", "Frequency Scaler",  "Amplitude Scaler", "Amplitude smoothing",
-                                       "Epochs", "Batch Size", "Optimizer", "Loss Function", "Training Time (s)"])
+                                       "Testing Loss", "Testing Mean IOU", "Window length", 
+                                       "Window standard deviation", "Training Time (s)"])
 
     max_len = df["freq"].apply(len).max()
+    count = 0
+    # winlens, scalers, lennorm
+    for win_len in win_lens:
+        for win_std in win_stds:
+            win_values = windows.gaussian(win_len, std=win_std)
 
-    for win_values in win_values_array:
-        for include_lengths in include_lengths_options:
-            for scaler_class in scalers:
-                for epoch in epochs:
-                    for batch in batch_size:
-                        for loss_class in losses:
-                            for optim_class in optimisers:
-                                count += 1
-                                print(f"Running experiment {count} with window values: {win_values}, include_lengths: {include_lengths}, scaler: {scaler}, epochs: {epoch}, batch size: {batch}, optimizer: {optim_class.__name__}, loss function: {loss_class.__name__}")
-                                
-                                optim = optim_class()
-                                loss = loss_class()
-                                scaler = scaler_class() if scaler_class is not None else None
-                                if scaler is not None:
-                                    scaler_name = type(scaler).__name__
-                                else:
-                                    scaler_name = "None"
-                                
-                                # Scale the data
-                                df['res_freq_map'] = add_res_freq_map(df, window_values=win_values)
-                                df_train, df_test = split_data(df, test_frac=0.8)
-                                scaled_df_train, scaled_df_test = scale_data(df_train, df_test, scaler)
-                                
-                                # Prepare datasets
-                                dloader_train, win_size, channel = prepare_torch_datasets(scaled_df_train, max_len, is_sig2sig=True, include_lengths=include_lengths)
-                                dloader_test, _, _ = prepare_torch_datasets(scaled_df_test, max_len, is_sig2sig=True, include_lengths=include_lengths)
-                                
-                                # Create model
-                                model = sig2sig_unet(win_size, channel)
-                                
-                                model_name = f"UNet_model_{count}_win_{len(win_values)}_len_{include_lengths}_scaler_{scaler_name}"
-                                save_model_path = f"UNet/models/{model_name}.keras"
-                                
-                                # Train the model
-                                history, training_time = train_model(model, dloader_train, epoch, save_model_path, optim, loss, batch, patience)
+            if scaler is not None:
+                freq_scaler = scaler() 
+                scaler_name = type(freq_scaler).__name__
+            else:
+                freq_scaler = None
+                scaler_name = "None"
 
-                                hist_keys = list(history.keys())
-                                loss_key = hist_keys[0]
-                                metric_key = hist_keys[1]
-                                # Plot training history
-                                plot_history(loss_key, history, f"UNet/figures/training_loss_plot_{count}.png")
-                                plot_history(metric_key, history, f"UNet/figures/meaniou_plot_{count}.png")
-                                
-                                print(f"Training completed in {training_time:.2f} seconds for experiment {count}.")
-                                
-                                # Test the model
-                                testing = test_model(save_model_path, dloader_test, batch)
-                                print(f"Testing results for experiment {count}\n Loss: {testing[0]} \n Mean IOU: {testing[1]}")
-                                
-                                # Save metrics to file
-                                results_dict = {
-                                    "Training Loss": history[loss_key][-1],
-                                    "Training Mean IOU": history[metric_key][-1],
-                                    "Testing Loss": testing[0],
-                                    "Testing Mean IOU": testing[1],
-                                    "Window Values": win_values,
-                                    "Include Lengths": include_lengths,
-                                    "Scaler": scaler_name,
-                                    "Epochs": epoch,
-                                    "Batch Size": batch,
-                                    "Optimizer": optim_class.__name__,
-                                    "Loss Function": loss_class.__name__,
-                                    "Training Time (s)": training_time
+            if len_normalisation:
+                df['length'] = normalise_lengths(df['length'].values)
 
-                                }
+            df['res_freq_map'] = add_res_freq_map(df, window_values=win_values)
+            df_train, df_test = split_data(df, test_frac=0.2)
+            df_train["freq"], df_test["freq"] = scale_data(df_train["freq"], df_test["freq"], freq_scaler)
 
-                                results_df = pd.concat([results_df, pd.DataFrame([results_dict])], ignore_index=True)
-    results_df.to_csv("UNet/metrics/experiment_results.csv", index=False)
+            dloader_train, win_size, channel = prepare_torch_datasets(df_train, max_len, is_sig2sig=True, include_lengths=include_lengths_options, ampl_proc=ampl_smoothing)
+            dloader_test, _, _ = prepare_torch_datasets(df_test, max_len, is_sig2sig=True, include_lengths=include_lengths_options, ampl_proc=ampl_smoothing)
+            
+            model = sig2sig_unet(win_size, channel)
+                                            
+            model_name = f"UNet_model_{count}_win_len_{win_len}_win_std_{win_std}"
+            save_model_path = f"UNet/models/prelim_testing/{model_name}.keras"
+            
+            # Train the model
+            optimiser = optimiser_class()
+            loss = loss_class()
+            history, training_time = train_model(model, dloader_train, epochs, save_model_path, optimiser, loss, batch_size, patience)
 
-    
-    
-    # dloader_train, dloader_test, win_size, channel = prepare_torch_datasets(df, is_sig2sig=True)
+            hist_keys = list(history.keys())
+            loss_key = hist_keys[0]
+            metric_key = hist_keys[1]
+            # Plot training history
+            plot_history(loss_key, history, f"UNet/figures/loss/training_loss_plot_{count}.png")
+            plot_history(metric_key, history, f"UNet/figures/metric/meaniou_plot_{count}.png")
+            
+            print(f"Training completed in {training_time:.2f} seconds for experiment {count}.")
+            
+            # Test the model
+            testing = test_model(save_model_path, dloader_test, batch_size)
+            print(f"Testing results for experiment {count}\n Loss: {testing[0]} \n Mean IOU: {testing[1]}")
 
-    # model = sig2sig_unet(win_size, channel)
-    
-    # model_name = "UNet_model01"
-    # save_model_path = "UNet/" + model_name + ".keras"
-    
-    
+            results_dict = {
+                "Name": model_name,
+                "Training Loss": history[loss_key][-1],
+                "Training Mean IOU": history[metric_key][-1],
+                "Testing Loss": testing[0],
+                "Testing Mean IOU": testing[1],
+                "Window length": win_len,
+                "Window standard deviation": win_std,
+                "Training Time (s)": training_time
+            }
+            results_df = pd.concat([results_df, pd.DataFrame([results_dict])], ignore_index=True)
+            count += 1
 
-    # history, training_time = train_model(model, dloader_train, epochs, save_model_path, optim, loss, batch_size, patience)
-    # plot_history('loss', history, "UNet/figures/training_loss_plot01.png")
-    # plot_history('mean_io_u', history, "UNet/figures/meaniou_plot01.png")
-
-    # print(f"Training completed in {training_time:.2f} seconds.")
-
-    # testing = test_model(save_model_path, dloader_test, batch_size)
-    # print(f"Testing results\n Loss: {testing[0]} \n Mean IOU: {testing[1]}")
-
-    # with open("UNet/metrics/"+model_name+"_metrics.txt", "w") as f:
-    #     f.write(f"Training completed in {training_time:.2f} seconds.\n")
-    #     f.write(f"Training results\n Loss: {history['loss'][-1]} \n Mean IOU: {history['mean_io_u'][-1]}\n")
-    #     f.write(f"Testing results\n Loss: {testing[0]} \n Mean IOU: {testing[1]}\n")
+    results_df.to_csv("UNet/metrics/prelim_testing_results.csv", index=False)
+                                                                            

@@ -1,4 +1,5 @@
 from models import sig2sig_unet
+from models import MaskedPeakRecall, MaskedPeakPrecision, MaskedPeakBinError
 import tensorflow as tf
 import torch
 import numpy as np
@@ -23,12 +24,18 @@ def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss, 
         Tuple containing:
             history: Training history.
             training_time: Time taken to train the model.
+
+        history[0] contains loss, history[1] contains metric
     
     """
 
     model.compile(optimizer=optim,
                 loss=loss,
-                metrics=[tf.keras.metrics.MeanIoU(num_classes = 2)])
+                weighted_metrics=[
+                    MaskedPeakRecall(threshold=0.5),
+                    MaskedPeakPrecision(threshold=0.5),
+                    MaskedPeakBinError(),
+                ])
 
     # checkpoint = tf.keras.callbacks.ModelCheckpoint(save_model_path, monitor='loss', verbose=1, save_best_only=True, mode='min')
     callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=patience)
@@ -46,6 +53,67 @@ def test_keras_model(model_path, data_loader, batch_size):
     model = tf.keras.models.load_model(model_path)
     testing = model.evaluate(data_loader, batch_size=batch_size)
     return testing
+
+
+def evaluate_peak_metrics(model_path, data_loader, threshold=0.5):
+    model = tf.keras.models.load_model(model_path, compile=False)
+
+    target_positives = 0
+    true_positives = 0
+    predicted_positives = 0
+    bin_errors = []
+
+    for inputs, y_true, sample_weights in data_loader:
+        y_pred = model.predict(inputs, verbose=0)
+        y_true = y_true.numpy() if hasattr(y_true, "numpy") else np.asarray(y_true)
+        y_pred = np.asarray(y_pred)
+        sample_weights = (
+            sample_weights.numpy()
+            if hasattr(sample_weights, "numpy")
+            else np.asarray(sample_weights)
+        )
+
+        y_true = np.squeeze(y_true, axis=-1) if y_true.ndim == 3 else y_true
+        y_pred = np.squeeze(y_pred, axis=-1) if y_pred.ndim == 3 else y_pred
+        sample_weights = (
+            np.squeeze(sample_weights, axis=-1)
+            if sample_weights.ndim == 3
+            else sample_weights
+        )
+
+        target_mask = y_true >= threshold
+        predicted_mask = y_pred >= threshold
+        valid_mask = sample_weights > 0
+
+        target_positives += np.count_nonzero(target_mask & valid_mask)
+        true_positives += np.count_nonzero(
+            target_mask & predicted_mask & valid_mask
+        )
+        predicted_positives += np.count_nonzero(predicted_mask & valid_mask)
+
+        for i in range(len(y_true)):
+            valid_length = int(np.count_nonzero(sample_weights[i]))
+            if valid_length == 0:
+                continue
+            y_true_valid = y_true[i, :valid_length]
+            y_pred_valid = y_pred[i, :valid_length]
+            bin_errors.append(
+                abs(
+                    int(np.argmax(y_pred_valid))
+                    - int(np.argmax(y_true_valid))
+                )
+            )
+
+    return {
+        "peak_recall": true_positives / max(target_positives, 1),
+        "peak_precision": true_positives / max(predicted_positives, 1),
+        "mean_peak_bin_error": (
+            float(np.mean(bin_errors)) if bin_errors else None
+        ),
+        "max_peak_bin_error": (
+            int(np.max(bin_errors)) if bin_errors else None
+        ),
+    }
 
 def keras_model_inference(model_path, x_freq, x_ampl, x_lengths=None):
     """
@@ -66,17 +134,17 @@ def keras_model_inference(model_path, x_freq, x_ampl, x_lengths=None):
     x_freq = np.asarray(x_freq).reshape(-1)
     x_ampl = np.asarray(x_ampl).reshape(-1)
 
+    data_length = min(input_length, len(x_freq), len(x_ampl))
     freq = np.zeros(input_length, dtype=np.float32)
     ampl = np.zeros(input_length, dtype=np.float32)
-    freq[:min(input_length, len(x_freq))] = x_freq[:input_length]
-    ampl[:min(input_length, len(x_ampl))] = x_ampl[:input_length]
+    freq[:data_length] = x_freq[:data_length]
+    ampl[:data_length] = x_ampl[:data_length]
 
     freq_tensor = torch.tensor(freq, dtype=torch.float32)
     ampl_tensor = torch.tensor(ampl, dtype=torch.float32)
 
     if x_lengths is not None:
         lengths = np.zeros(input_length, dtype=np.float32)
-        data_length = min(input_length, len(x_freq))
         lengths[:data_length] = float(x_lengths)
         lengths_tensor = torch.tensor(lengths, dtype=torch.float32)
         final_tensor = torch.stack((freq_tensor, ampl_tensor, lengths_tensor), dim=1).unsqueeze(0)
@@ -84,4 +152,4 @@ def keras_model_inference(model_path, x_freq, x_ampl, x_lengths=None):
         final_tensor = torch.stack((freq_tensor, ampl_tensor), dim=1).unsqueeze(0)  # Concatenate along the channel dimension
 
     output = model.predict(final_tensor)
-    return (freq, output.flatten())
+    return (freq[:data_length], output.flatten()[:data_length])
