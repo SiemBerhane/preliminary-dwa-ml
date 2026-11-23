@@ -151,7 +151,7 @@ def baseline_subtract(freqs, ampls):
     Returns:
         list: 2D list of smoothed amplitude data for each scan.
     """
-    smoothed_ampls = [prepare_data.baseline_subtracted(freq, ampl) for freq, ampl in zip(freqs, ampls)]
+    smoothed_ampls = [prepare_data.baseline_subtracted(freq, np.cumsum(ampl)) for freq, ampl in zip(freqs, ampls)]
     return smoothed_ampls
 
 def smooth_data(freqs, ampls):
@@ -265,7 +265,7 @@ def plot_history(key, history, save_path):
 
 if __name__ == "__main__":
     if len(tf.config.list_physical_devices("GPU")) == 0:
-        print("No GPU found. Exiting...")
+        print("No GPU found...")
         # exit(1)
     else:
         print("GPU found. Proceeding with training...")
