@@ -1,11 +1,17 @@
 from models import sig2sig_unet
-from models import MaskedPeakRecall, MaskedPeakPrecision, MaskedPeakBinError
+from models import (
+    MaskedPeakRecall,
+    MaskedPeakPrecision,
+    MaskedPeakBinError,
+    MaskedWeightedBinaryCrossentropy,
+)
 import tensorflow as tf
 import torch
 import numpy as np
 import time
 
-def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss, batch_size, patience):
+def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss,
+                      batch_size, patience, positive_weight=10.0):
 
     """"
     Trains keras model. Implements early stopping and saves the model to the specified path.
@@ -28,6 +34,11 @@ def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss, 
         history[0] contains loss, history[1] contains metric
     
     """
+
+    if isinstance(loss, tf.keras.losses.BinaryCrossentropy):
+        loss = MaskedWeightedBinaryCrossentropy(
+            positive_weight=positive_weight
+        )
 
     model.compile(optimizer=optim,
                 loss=loss,
@@ -124,11 +135,12 @@ def keras_model_inference(model_path, x_freq, x_ampl, x_lengths=None):
         model_path (str): Path to the trained Keras model.
         x_freq (np.ndarray): Input frequency data.
         x_ampl (np.ndarray): Input amplitude data.
+        x_lengths (np.ndarray, optional): Input lengths data.
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]: The padded frequency [0] and the output of the model after inference, flattened to a 1D array [1]
+        Tuple[np.ndarray, np.ndarray]: The non-padded frequency [0] and the output of the model after inference, flattened to a 1D array [1]
     """
-    model = tf.keras.models.load_model(model_path, compile=True)
+    model = tf.keras.models.load_model(model_path, compile=False)
     input_length = model.get_config()["layers"][0]['config']['batch_shape'][1]
 
     x_freq = np.asarray(x_freq).reshape(-1)

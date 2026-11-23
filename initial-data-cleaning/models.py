@@ -9,6 +9,44 @@ def _prepare_mask(sample_weight):
         return tf.squeeze(sample_weight, axis=-1) # removes channel dimension if present
     return sample_weight
 
+
+@tf.keras.utils.register_keras_serializable(package="DWA")
+class MaskedWeightedBinaryCrossentropy(tf.keras.losses.Loss):
+    """Binary cross-entropy that can emphasize target peak bins.
+
+    Padding is excluded by the sample_weight supplied as the third item of each
+    DataLoader batch. The positive_weight term controls how strongly target
+    bins contribute compared with background bins.
+    """
+    def __init__(self, positive_weight=10.0, name="masked_weighted_binary_crossentropy",
+                 **kwargs):
+        kwargs.pop("reduction", None)
+        super().__init__(
+            reduction=tf.keras.losses.Reduction.SUM_OVER_BATCH_SIZE,
+            name=name,
+            **kwargs,
+        )
+        self.positive_weight = float(positive_weight)
+
+    def get_config(self):
+        config = super().get_config()
+        config["positive_weight"] = self.positive_weight
+        return config
+
+    def call(self, y_true, y_pred):
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.cast(y_pred, tf.float32)
+        epsilon = tf.keras.backend.epsilon()
+
+        y_pred = tf.clip_by_value(y_pred, epsilon, 1.0 - epsilon)
+        positive_loss = (
+            self.positive_weight
+            * y_true
+            * -tf.math.log(y_pred)
+        )
+        negative_loss = (1.0 - y_true) * -tf.math.log1p(-y_pred)
+        return positive_loss + negative_loss
+
 #%% UNET MODEL
 
 #_______________________________________________
