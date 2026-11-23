@@ -11,7 +11,7 @@ import numpy as np
 import time
 
 def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss,
-                      batch_size, patience, positive_weight=10.0):
+                      batch_size, patience, positive_weight=200.0):
 
     """"
     Trains keras model. Implements early stopping and saves the model to the specified path.

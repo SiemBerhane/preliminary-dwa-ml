@@ -18,7 +18,7 @@ class MaskedWeightedBinaryCrossentropy(tf.keras.losses.Loss):
     DataLoader batch. The positive_weight term controls how strongly target
     bins contribute compared with background bins.
     """
-    def __init__(self, positive_weight=10.0, name="masked_weighted_binary_crossentropy",
+    def __init__(self, positive_weight=200.0, name="masked_weighted_binary_crossentropy",
                  **kwargs):
         kwargs.pop("reduction", None)
         super().__init__(
