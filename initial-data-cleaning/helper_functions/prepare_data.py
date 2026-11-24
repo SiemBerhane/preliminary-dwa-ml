@@ -21,7 +21,10 @@ def get_tension_data(processed_data_path, stage, layers=["G", "X", "U", "V"], ex
     Returns:
         list: A list of dictionaries containing tension data for each wire in the specified layers. 
         Each element contains the following keys:
+            
             - uid: A unique identifier for the wire segment, layer + side + segment number.
+            - parent_folder: The parent folder name from which the tension reading was extracted.
+            Different readings correspond to different parent folders
             - tension: The tension value extracted from the processed data.
     """
     
@@ -123,7 +126,8 @@ def get_raw_data(path, keys_to_remove):
 def map_wire_segments_to_channels(scan, folder_path):
     """
     Maps wire segments to their corresponding channel indices based on the APA channels in the scan data.
-    
+    The last two digits of the wire segment ID are used to find the corresponding channel index in the APA channels list.
+
     Args:
         scan (dict): A dictionary containing the cleaned scan data. 
     
@@ -244,36 +248,44 @@ def calculate_res_freq(tensions, lengths, rho):
 
     return np.sqrt(tensions / rho) * (1 / (2*lengths))
 
-def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False, ampl_proc="raw", is_freq_scaled=False):
+def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False, ampl_proc="raw", is_freq_scaled=False, is_ampl_scaled=False, is_length_scaled=False):
     """
     Creates PyTorch datasets for the input features and target variable from the given DataFrame.
     
     Args:
         df (pd.DataFrame): A DataFrame containing the input features and target variable.
+        max_len (int): The maximum length of the input data. Input data will be padded to this length.
         sig2sig (bool): A flag indicating whether the target variable is a signal (True) or a scalar value (False). Default is False.
         include_lengths (bool): A flag indicating whether to include wire lengths in the input features. Default is False.
         ampl_proc (str): Type of amplitude data to use ("raw", "bg_sub", "smooth"). Defaults to "raw" if invalid ampl_proc is specified.
+        is_freq_scaled (bool): A flag indicating whether the frequency data is scaled. Default is False.
 
     Returns:
-        tuple: A tuple containing the input features tensor (X_tensor), target
-        variable tensor (y_tensor), and sample-weight tensor (sample_weights).
-        For signal-to-signal datasets, sample_weights has shape
-        (num_samples, target_len) and is 1 for real data and 0 for padding.
+        tuple [torch.tensor, torch.tensor, torch.tensor]: A tuple containing the input features tensor (X_tensor), target variable tensor (y_tensor), and sample-weight tensor (sample_weights). 
+        For signal-to-signal datasets, sample_weights has shape(num_samples, target_len) and is 1 for real data and 0 for padding.
     """
-    if ampl_proc == "raw":
-        ampl_name = "ampl"
-    elif ampl_proc == "bg_sub":
-        ampl_name = "baseline_subtracted_ampl"
-    elif ampl_proc == "smooth":
-        ampl_name = "smoothed_ampl"
+    if is_ampl_scaled:
+        ampl_name = "scaled_ampl"
     else:
-        # raise Warning("Invalid scan_type specified. Must be 'raw', 'bg_sub', or 'smooth'.")
-        ampl_name = "ampl" # default to raw if invalid scan_type is specified
+        if ampl_proc == "raw":
+            ampl_name = "ampl"
+        elif ampl_proc == "bg_sub":
+            ampl_name = "baseline_subtracted_ampl"
+        elif ampl_proc == "smooth":
+            ampl_name = "smoothed_ampl"
+        else:
+            # raise Warning("Invalid scan_type specified. Must be 'raw', 'bg_sub', or 'smooth'.")
+            ampl_name = "ampl" # default to raw if invalid scan_type is specified
 
     if is_freq_scaled:
         freq_name = "scaled_freq"
     else:
         freq_name = "freq"
+
+    if is_length_scaled:
+        length_name = "scaled_length"
+    else:
+        length_name = "length"
     
     target_len = ((max_len + 63) // 64) * 64 # Round up to the nearest multiple of 64 for GPU efficiency
     num_samples = len(df)
@@ -286,7 +298,7 @@ def create_torch_datasets(df, max_len, sig2sig = False, include_lengths = False,
         padded_y = torch.zeros((num_samples, target_len), dtype=torch.float32) 
 
         if include_lengths:
-            wire_lengths = df["length"].values
+            wire_lengths = df[length_name].values
             padded_lengths = torch.zeros((num_samples, target_len), dtype=torch.float32)
 
     if sig2sig:

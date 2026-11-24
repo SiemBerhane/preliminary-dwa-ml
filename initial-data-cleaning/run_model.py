@@ -186,15 +186,39 @@ def scale_data(train, test, scaler):
     if scaler is None:
         return (train, test)
 
-    # amplitude data has variable length so will scale each amplitude array individually 
-    flat_train = np.concatenate(train.values).reshape(-1, 1)
+    train_values = train.to_numpy()
+    test_values = test.to_numpy()
+
+    # Scalar columns (for example, wire length) need a 2-D matrix, while
+    # amplitude/frequency columns contain variable-length arrays.
+    first_train_value = np.asarray(train_values[0])
+    if first_train_value.ndim == 0: # if scalar, first element will be a 0-D array, otherwise it will be a 1-D array
+        train_flat = train_values.reshape(-1, 1)
+        scaler.fit(train_flat)
+
+        train = pd.Series(
+            scaler.transform(train_values.reshape(-1, 1)).flatten(),
+            index=train.index,
+            name=train.name,
+        )
+        test = pd.Series(
+            scaler.transform(test_values.reshape(-1, 1)).flatten(),
+            index=test.index,
+            name=test.name,
+        )
+        return (train, test)
+
+    flat_train = np.concatenate(
+        [np.asarray(value).reshape(-1) for value in train_values]
+    ).reshape(-1, 1)
     scaler.fit(flat_train)
 
     train = train.apply(
-        lambda x: scaler.transform(np.array(x).reshape(-1, 1)).flatten().tolist())
-
+        lambda x: scaler.transform(np.asarray(x).reshape(-1, 1)).flatten().tolist()
+    )
     test = test.apply(
-        lambda x: scaler.transform(np.array(x).reshape(-1, 1)).flatten().tolist())
+        lambda x: scaler.transform(np.asarray(x).reshape(-1, 1)).flatten().tolist()
+    )
 
     return (train, test)
 
@@ -210,18 +234,21 @@ def normalise_lengths(lengths):
     """
     return lengths / np.max(lengths)
 
-def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, ampl_proc="raw", is_freq_scaled=False):
+def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, ampl_proc="raw", is_freq_scaled=False, is_ampl_scaled=False, is_length_scaled=False):
     """
     Prepares PyTorch datasets and dataloaders from a pandas DataFrame.
 
     Args:
         df (pd.DataFrame): The input DataFrame.
+        max_len (int): The maximum length of the input data.
+        include_lengths (bool): Whether to include lengths in the dataset.
         is_sig2sig (bool): Whether to create a signal-to-signal dataset.
         ampl_proc (str): Type of amplitude data to use ("raw", "bg_sub", "smooth" ).
+        is_freq_scaled (bool): Whether the frequency data is scaled.
+        is_ampl_scaled (bool): Whether the amplitude data is scaled.
 
     Returns:
-        dloader_train (torch.utils.data.DataLoader): PyTorch DataLoader for the training set.
-        dloader_test (torch.utils.data.DataLoader): PyTorch DataLoader for the testing set.
+        dloader (torch.utils.data.DataLoader): PyTorch DataLoader.
         win_size (int): The window size of the input data.
         channel (int): The number of channels in the input data.
     """
@@ -231,7 +258,9 @@ def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, 
         sig2sig=is_sig2sig,
         include_lengths=include_lengths,
         ampl_proc=ampl_proc,
-        is_freq_scaled=is_freq_scaled
+        is_freq_scaled=is_freq_scaled,
+        is_ampl_scaled=is_ampl_scaled,
+        is_length_scaled=is_length_scaled
     )
     dataset = TensorDataset(X_padded, y_tensor, sample_weights)
     dloader = DataLoader(dataset, batch_size=32, shuffle=True)
