@@ -126,20 +126,25 @@ def evaluate_peak_metrics(model_path, data_loader, threshold=0.5):
         ),
     }
 
-def keras_model_inference(model_path, x_freq, x_ampl, x_lengths=None):
+def keras_model_inference(model_path, x_freq, x_ampl, x_lengths=None, edge_bins=50):
     """
     Performs inference using a trained Keras model on the provided frequency and amplitude data.
-    Pads the input data to match the model's expected input shape and returns the model's output.
+    Pads the input data to match the model's expected input shape, suppresses edge and padded
+    predictions, and returns arrays matching the model's input length.
 
     Args:
         model_path (str): Path to the trained Keras model.
         x_freq (np.ndarray): Input frequency data.
         x_ampl (np.ndarray): Input amplitude data.
         x_lengths (np.ndarray, optional): Input lengths data.
+        edge_bins (int): Number of valid scan bins at each end to suppress.
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]: The non-padded frequency [0] and the output of the model after inference, flattened to a 1D array [1]
+        Tuple[np.ndarray, np.ndarray]: Padded frequency and prediction arrays, both flattened to 1D.
     """
+    if not isinstance(edge_bins, (int, np.integer)) or edge_bins < 0:
+        raise ValueError("edge_bins must be a non-negative integer.")
+
     model = tf.keras.models.load_model(model_path, compile=False)
     input_length = model.get_config()["layers"][0]['config']['batch_shape'][1]
 
@@ -163,5 +168,11 @@ def keras_model_inference(model_path, x_freq, x_ampl, x_lengths=None):
     else:
         final_tensor = torch.stack((freq_tensor, ampl_tensor), dim=1).unsqueeze(0)  # Concatenate along the channel dimension
 
-    output = model.predict(final_tensor)
-    return (freq[:data_length], output.flatten()[:data_length])
+    output = model.predict(final_tensor, verbose=0).flatten()
+    output[data_length:] = 0.0
+
+    edge_bins = min(edge_bins, data_length)
+    output[:edge_bins] = 0.0
+    output[max(edge_bins, data_length - edge_bins):data_length] = 0.0
+
+    return (freq, output)
