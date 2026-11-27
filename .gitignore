@@ -55,7 +55,7 @@ cover/
 # Datasets
 datasets/
 
-# UNet experimential models
+# Model experimentation
 UNet/
 
 # copying figures are saved here - no need to upload to github
