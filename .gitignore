@@ -52,6 +52,11 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# ------------------------------------ 
+# Custom ignores written by me!
+
+.github/
+
 # Datasets
 datasets/
 
@@ -67,6 +72,8 @@ logs/
 outputs/
 *.job
 *.sh
+
+# ------------------------------------
 
 # Translations
 *.mo
