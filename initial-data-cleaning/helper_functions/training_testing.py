@@ -48,7 +48,7 @@ def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss,
                     MaskedPeakBinError(),
                 ])
 
-    # checkpoint = tf.keras.callbacks.ModelCheckpoint(save_model_path, monitor='loss', verbose=1, save_best_only=True, mode='min')
+    # checkpoint = tf.keras.callbacks.ModelCheckpoint(save_model_path, monitor='loss', verbose=1, save_freq="epoch", mode='min')
     callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=patience)
 
     print("Starting training...")

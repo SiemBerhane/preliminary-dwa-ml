@@ -234,7 +234,7 @@ def normalise_lengths(lengths):
     """
     return lengths / np.max(lengths)
 
-def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, ampl_proc="raw", is_freq_scaled=False, is_ampl_scaled=False, is_length_scaled=False):
+def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, ampl_proc="raw", is_freq_scaled=False, is_ampl_scaled=False, is_length_scaled=False, shuffle=True):
     """
     Prepares PyTorch datasets and dataloaders from a pandas DataFrame.
 
@@ -246,6 +246,7 @@ def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, 
         ampl_proc (str): Type of amplitude data to use ("raw", "bg_sub", "smooth" ).
         is_freq_scaled (bool): Whether the frequency data is scaled.
         is_ampl_scaled (bool): Whether the amplitude data is scaled.
+        shuffle (bool): Whether to shuffle batches during training.
 
     Returns:
         dloader (torch.utils.data.DataLoader): PyTorch DataLoader.
@@ -263,7 +264,7 @@ def prepare_torch_datasets(df, max_len, is_sig2sig=True, include_lengths=False, 
         is_length_scaled=is_length_scaled
     )
     dataset = TensorDataset(X_padded, y_tensor, sample_weights)
-    dloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dloader = DataLoader(dataset, batch_size=32, shuffle=shuffle)
     return (dloader, X_padded.shape[1], X_padded.shape[2])
 
 def train_model(model, dloader_train, epochs, save_model_path, optim, loss, batch_size, patience):

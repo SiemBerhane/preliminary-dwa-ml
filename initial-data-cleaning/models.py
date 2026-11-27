@@ -2,6 +2,10 @@ from keras.layers import Conv1D, Dropout, MaxPooling1D, Input, Concatenate, Aver
 from keras.models import Model
 import tensorflow as tf
 
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+
 
 def _prepare_mask(sample_weight):
     sample_weight = tf.cast(sample_weight, tf.float32)
@@ -46,6 +50,20 @@ class MaskedWeightedBinaryCrossentropy(tf.keras.losses.Loss):
         )
         negative_loss = (1.0 - y_true) * -tf.math.log1p(-y_pred)
         return positive_loss + negative_loss
+
+    def __call__(self, y_true, y_pred, sample_weight=None, **kwargs):
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.cast(y_pred, tf.float32)
+        per_bin_loss = self.call(y_true, y_pred)
+
+        if sample_weight is not None:
+            mask = _prepare_mask(tf.cast(sample_weight, tf.float32))
+            per_bin_loss = tf.squeeze(per_bin_loss, axis=-1)
+            per_bin_loss *= mask
+            denominator = tf.maximum(tf.reduce_sum(mask), 1e-7)
+            return tf.reduce_sum(per_bin_loss) / denominator
+
+        return tf.reduce_mean(per_bin_loss)
 
 #%% UNET MODEL
 
@@ -258,4 +276,89 @@ class MaskedPeakBinError(tf.keras.metrics.Metric):
         self.total_error.assign(0.0)
         self.sample_count.assign(0.0)
 
+
+class EpochInferenceCallback(tf.keras.callbacks.Callback):
+    """Perform inference on fixed samples and save target/prediction plots."""
+
+    def __init__(self, sample_inputs, target, frequencies, sample_weights=None,
+                 every=10, output_dir="epoch_predictions"):
+        super().__init__()
+        self.sample_inputs = np.asarray(sample_inputs)
+        self.target = np.asarray(target).squeeze(-1)
+        self.frequencies = [np.asarray(frequency).reshape(-1) for frequency in frequencies]
+        if sample_weights is None:
+            self.sample_weights = np.ones_like(self.target)
+        else:
+            sample_weights = np.asarray(sample_weights)
+            self.sample_weights = (
+                sample_weights.squeeze(-1)
+                if sample_weights.ndim == 3
+                else sample_weights
+            )
+        self.every = every
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+    def on_epoch_end(self, epoch, logs=None):
+        if (epoch + 1) % self.every != 0:
+            return
+
+        prediction = self.model.predict(
+            self.sample_inputs,
+            verbose=0,
+        )
+
+        prediction = np.asarray(prediction).squeeze(-1)
+        evaluation = self.model.evaluate(
+            self.sample_inputs,
+            self.target[..., np.newaxis],
+            sample_weight=self.sample_weights,
+            verbose=0,
+            return_dict=True,
+        )
+        print(
+            f"Epoch {epoch + 1}, fixed-batch evaluate: "
+            f"loss={evaluation.get('loss', float('nan')):.6f}, "
+            f"peak_bin_error={evaluation.get('peak_bin_error', float('nan')):.4f}"
+        )
+
+        fig, axes = plt.subplots(
+            len(self.sample_inputs),
+            1,
+            figsize=(10, 3 * len(self.sample_inputs)),
+            sharex=True,
+        )
+        if len(self.sample_inputs) == 1:
+            axes = [axes]
+
+        for i, ax in enumerate(axes):
+            valid_length = int(np.count_nonzero(self.sample_weights[i]))
+            valid_length = min(valid_length, len(self.frequencies[i]),
+                               len(prediction[i]))
+            frequency = self.frequencies[i][:valid_length]
+            target = self.target[i, :valid_length]
+            predicted = prediction[i, :valid_length]
+
+            ax.plot(frequency, target, label="Target")
+            ax.plot(frequency, predicted, label="Prediction")
+            ax.set_title(f"Epoch {epoch + 1}, sample {i}")
+            ax.set_xlabel("Frequency (Hz)")
+            ax.set_ylabel("Amplitude")
+            ax.legend()
+
+            target_bin = int(np.argmax(target))
+            predicted_bin = int(np.argmax(predicted))
+            print(
+                f"Epoch {epoch + 1}, sample {i}: "
+                f"target={target_bin}, predicted={predicted_bin}, "
+                f"bin_error={abs(target_bin - predicted_bin)}, "
+                f"predicted_max={predicted.max():.4f}"
+            )
+
+        plt.tight_layout()
+        plt.savefig(
+            f"{self.output_dir}/epoch_{epoch + 1:03d}.png",
+            dpi=150,
+        )
+        plt.close()
 #%%
