@@ -61,17 +61,52 @@ def train_keras_model(model, data_loader, epochs, save_model_path, optim, loss,
     return (history.history, t2-t1)
 
 def test_keras_model(model_path, data_loader, batch_size):
+    """
+    Evaluates the trained keras model on the provided data loader.
+    
+    Args:
+        model_path (str): Path to the trained Keras model.
+        data_loader (torch.utils.Data.Dataloader): Data loader for evaluation data.
+        batch_size (int): Batch size for evaluation.
+
+    Returns:
+        dict: A dictionary containing the evaluation metrics as follows:
+            - "loss": Loss of the model on the evaluation data.
+            - "peak_bin_error": Mean bin error for peak predictions.
+            - "peak_precision": Precision of the model's peak predictions.
+            - "peak_recall": Recall of the model's peak predictions.
+    """
     model = tf.keras.models.load_model(model_path)
     testing = model.evaluate(data_loader, batch_size=batch_size)
-    return testing
+    return {
+        "loss": testing[0],
+        "peak_bin_error": testing[1],
+        "peak_precision": testing[2],
+        "peak_recall": testing[3]
+    }
 
 
 def evaluate_peak_metrics(model_path, data_loader, threshold=0.5):
+    """
+    Evaluates the model's performance on peak detection metrics. Calls model.predict
+
+    Args:
+        model_path (str): Path to the trained Keras model.
+        data_loader (torch.utils.data.DataLoader): Data loader for evaluation data.
+        threshold (float): Threshold for peak detection.
+
+    Returns:
+        dict: A dictionary containing the following metrics:
+            - "peak_recall": Recall of the model's peak predictions.
+            - "peak_precision": Precision of the model's peak predictions.
+            - "mean_peak_bin_error": Mean bin error for peak predictions.
+            - "max_peak_bin_error": Maximum bin error for peak predictions.
+    """
     model = tf.keras.models.load_model(model_path, compile=False)
 
-    target_positives = 0
-    true_positives = 0
-    predicted_positives = 0
+    peak_recall = MaskedPeakRecall(threshold=threshold)
+    peak_precision = MaskedPeakPrecision(threshold=threshold)
+    peak_bin_error = MaskedPeakBinError()
     bin_errors = []
 
     for inputs, y_true, sample_weights in data_loader:
@@ -92,35 +127,42 @@ def evaluate_peak_metrics(model_path, data_loader, threshold=0.5):
             else sample_weights
         )
 
-        target_mask = y_true >= threshold
-        predicted_mask = y_pred >= threshold
         valid_mask = sample_weights > 0
 
-        target_positives += np.count_nonzero(target_mask & valid_mask)
-        true_positives += np.count_nonzero(
-            target_mask & predicted_mask & valid_mask
+        metric_y_true = tf.convert_to_tensor(
+            y_true[..., np.newaxis], dtype=tf.float32
         )
-        predicted_positives += np.count_nonzero(predicted_mask & valid_mask)
+        metric_y_pred = tf.convert_to_tensor(
+            y_pred[..., np.newaxis], dtype=tf.float32
+        )
+        metric_sample_weights = tf.convert_to_tensor(
+            sample_weights, dtype=tf.float32
+        )
+        peak_recall.update_state(
+            metric_y_true, metric_y_pred, sample_weight=metric_sample_weights
+        )
+        peak_precision.update_state(
+            metric_y_true, metric_y_pred, sample_weight=metric_sample_weights
+        )
+        peak_bin_error.update_state(
+            metric_y_true, metric_y_pred, sample_weight=metric_sample_weights
+        )
 
         for i in range(len(y_true)):
-            valid_length = int(np.count_nonzero(sample_weights[i]))
-            if valid_length == 0:
+            if not np.any(valid_mask[i]):
                 continue
-            y_true_valid = y_true[i, :valid_length]
-            y_pred_valid = y_pred[i, :valid_length]
+            y_true_valid = np.where(valid_mask[i], y_true[i], -np.inf)
+            y_pred_valid = np.where(valid_mask[i], y_pred[i], -np.inf)
             bin_errors.append(
                 abs(
-                    int(np.argmax(y_pred_valid))
-                    - int(np.argmax(y_true_valid))
+                    int(np.argmax(y_pred_valid)) - int(np.argmax(y_true_valid))
                 )
             )
 
     return {
-        "peak_recall": true_positives / max(target_positives, 1),
-        "peak_precision": true_positives / max(predicted_positives, 1),
-        "mean_peak_bin_error": (
-            float(np.mean(bin_errors)) if bin_errors else None
-        ),
+        "peak_recall": float(peak_recall.result().numpy()),
+        "peak_precision": float(peak_precision.result().numpy()),
+        "mean_peak_bin_error": float(peak_bin_error.result().numpy()),
         "max_peak_bin_error": (
             int(np.max(bin_errors)) if bin_errors else None
         ),

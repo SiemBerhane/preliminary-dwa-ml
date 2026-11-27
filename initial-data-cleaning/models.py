@@ -16,7 +16,8 @@ def _prepare_mask(sample_weight):
 
 @tf.keras.utils.register_keras_serializable(package="DWA")
 class MaskedWeightedBinaryCrossentropy(tf.keras.losses.Loss):
-    """Binary cross-entropy that can emphasize target peak bins.
+    """
+    Binary cross-entropy that can emphasize target peak bins.
 
     Padding is excluded by the sample_weight supplied as the third item of each
     DataLoader batch. The positive_weight term controls how strongly target
@@ -152,6 +153,10 @@ def sig2sig_unet(win_size, channel = 1):
 
 @tf.keras.utils.register_keras_serializable(package="DWA")
 class MaskedPeakRecall(tf.keras.metrics.Metric):
+    """
+    Computes the recall of predicted peaks against target peaks, ignoring padded regions.
+    """
+
     def __init__(self, threshold=0.5, name="peak_recall", **kwargs):
         super().__init__(name=name, **kwargs)
         self.threshold = threshold
@@ -196,6 +201,9 @@ class MaskedPeakRecall(tf.keras.metrics.Metric):
 
 @tf.keras.utils.register_keras_serializable(package="DWA")
 class MaskedPeakPrecision(tf.keras.metrics.Metric):
+    """
+    Computes the precision of predicted peaks against target peaks, ignoring padded regions.
+    """
     def __init__(self, threshold=0.5, name="peak_precision", **kwargs):
         super().__init__(name=name, **kwargs)
         self.threshold = threshold
